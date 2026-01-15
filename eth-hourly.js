@@ -17,7 +17,11 @@ const axios = require('axios');
 const CONFIG = {
   DISCORD_WEBHOOK: 'https://discord.com/api/webhooks/1460806039011328171/kniEallTw7QPWTMSvLr2DWl4Vc4AyBVDfmdo2EKoYY9unp2m_RYq-kWzb9k7plE4tKp6',
 
-  // Price thresholds
+  // Price alert (works at ALL times)
+  PRICE_ALERT_THRESHOLD_USD: 10,    // Alert when price moves $10+ from open (any time)
+  PRICE_ALERT_INCREMENT_USD: 10,    // Re-alert every additional $10
+
+  // Price thresholds (strategy alerts - entry window only)
   MOVE_THRESHOLD_USD: 12,           // Only alert on $12+ moves
   REALERT_INCREMENT_USD: 6,         // Re-alert every additional $6
 
@@ -66,9 +70,12 @@ const state = {
   recentLiquidations: 0,
   liquidationDirection: null,  // 'long' or 'short'
 
-  // Alert tracking
+  // Alert tracking (strategy alerts)
   alertSentThisHour: false,
   lastAlertMoveUSD: null,
+
+  // Price alert tracking (works at ALL times)
+  lastPriceAlertLevel: 0,           // Last threshold crossed (e.g., 10, 20, 30...)
 
   // Connections
   ethWs: null,
@@ -291,6 +298,7 @@ async function fetchHourlyCandles() {
       if (wasNewHour) {
         state.alertSentThisHour = false;
         state.lastAlertMoveUSD = null;
+        state.lastPriceAlertLevel = 0;  // Reset price alert tracking
         console.log(`[New Hour] ETH Open: $${state.ethHourOpen.toFixed(2)}`);
       }
     }
@@ -442,7 +450,7 @@ async function sendAlert(evaluation) {
 
   try {
     await axios.post(CONFIG.DISCORD_WEBHOOK, {
-      content: `${actionEmoji} **${recommendation}** ${direction} | ETH ${formatUSD(ethMove)} | Odds: ${oddsDisplay} | ${minsRemaining.toFixed(0)}m left`,
+      content: `${actionEmoji} **${recommendation}** ${direction} | ETH ${formatUSD(ethMove)} | Odds: ${oddsDisplay} | ${minsRemaining.toFixed(0)}m left (${new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', timeZone: 'America/New_York' })} ET)`,
       embeds: [embed]
     });
     console.log(`[${formatTime(new Date())}] ALERT: ${recommendation} ${direction} | ${formatUSD(ethMove)}`);
@@ -451,14 +459,77 @@ async function sendAlert(evaluation) {
   }
 }
 
-// ============ ANALYSIS LOOP ============
-async function analyze() {
+// ============ PRICE ALERT (ALL TIMES) ============
+async function sendPriceAlert(ethMove, direction) {
+  const emoji = direction === 'UP' ? '📈' : '📉';
+  const color = direction === 'UP' ? 0x00ff00 : 0xff0000;
+  const minsRemaining = getMinutesRemaining();
+
+  const embed = {
+    title: `${emoji} ETH ${formatUSD(ethMove)} from open`,
+    color: color,
+    fields: [
+      {
+        name: '💰 Current Price',
+        value: `**$${state.ethPrice?.toFixed(2)}**`,
+        inline: true
+      },
+      {
+        name: '📊 Hour Open',
+        value: `**$${state.ethHourOpen?.toFixed(2)}**`,
+        inline: true
+      },
+      {
+        name: '⏱️ Time Left',
+        value: `**${minsRemaining.toFixed(0)} mins**`,
+        inline: true
+      }
+    ],
+    footer: {
+      text: 'Price Alert (all times)'
+    },
+    timestamp: new Date().toISOString()
+  };
+
+  try {
+    await axios.post(CONFIG.DISCORD_WEBHOOK, {
+      content: `${emoji} **PRICE ALERT** | ETH ${formatUSD(ethMove)} | $${state.ethPrice?.toFixed(2)}`,
+      embeds: [embed]
+    });
+    console.log(`[${formatTime(new Date())}] PRICE ALERT: ETH ${formatUSD(ethMove)}`);
+  } catch (e) {
+    console.error('Price alert failed:', e.message);
+  }
+}
+
+async function checkPriceAlert() {
   if (!state.ethPrice || !state.ethHourOpen) return;
 
   const ethMove = getEthMoveUSD();
   const absMove = Math.abs(ethMove);
+  const direction = ethMove >= 0 ? 'UP' : 'DOWN';
 
-  // Only proceed if move is significant AND in entry window
+  // Calculate which threshold level we're at (10, 20, 30, etc.)
+  const currentLevel = Math.floor(absMove / CONFIG.PRICE_ALERT_THRESHOLD_USD) * CONFIG.PRICE_ALERT_THRESHOLD_USD;
+
+  // Only alert if we crossed a new threshold
+  if (currentLevel >= CONFIG.PRICE_ALERT_THRESHOLD_USD && currentLevel > state.lastPriceAlertLevel) {
+    await sendPriceAlert(ethMove, direction);
+    state.lastPriceAlertLevel = currentLevel;
+  }
+}
+
+// ============ ANALYSIS LOOP ============
+async function analyze() {
+  if (!state.ethPrice || !state.ethHourOpen) return;
+
+  // Check for price alerts first (works at ALL times)
+  await checkPriceAlert();
+
+  const ethMove = getEthMoveUSD();
+  const absMove = Math.abs(ethMove);
+
+  // Only proceed with strategy alerts if move is significant AND in entry window
   if (absMove < CONFIG.MOVE_THRESHOLD_USD) return;
   if (!isInEntryWindow()) return;
 
@@ -514,7 +585,10 @@ async function start() {
   console.log('  ETH HOURLY WATCHER v3 - CEMENT WINS EDITION');
   console.log('══════════════════════════════════════════════════════');
   console.log('');
-  console.log('  Alerts only when:');
+  console.log('  Price Alerts (ALL times):');
+  console.log(`    - ETH moves $${CONFIG.PRICE_ALERT_THRESHOLD_USD}+ from open`);
+  console.log('');
+  console.log('  Strategy Alerts (entry window only):');
   console.log(`    - ETH moves $${CONFIG.MOVE_THRESHOLD_USD}+ from open`);
   console.log(`    - Entry window: minute ${CONFIG.ENTRY_WINDOW_START}-${CONFIG.ENTRY_WINDOW_END}`);
   console.log('    - Includes BUY/SKIP recommendation');
@@ -539,7 +613,7 @@ async function start() {
   setInterval(fetchHourlyCandles, 60000);
   setInterval(printStatus, CONFIG.STATUS_PRINT_INTERVAL);
 
-  console.log('Bot running. Only alerts on $12+ moves in entry window.\n');
+  console.log(`Bot running. Price alerts on $${CONFIG.PRICE_ALERT_THRESHOLD_USD}+ moves (all times). Strategy alerts on $${CONFIG.MOVE_THRESHOLD_USD}+ moves in entry window.\n`);
 }
 
 process.on('SIGINT', () => {

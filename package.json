@@ -4,11 +4,12 @@
   "description": "ETH Hourly Watcher - Polymarket UP/DOWN Signal Bot",
   "main": "eth-hourly.js",
   "scripts": {
-    "start": "node eth-hourly.js",
-    "btc": "node index.js"
+    "start": "node index.js",
+    "dev": "node index.js"
   },
   "dependencies": {
     "axios": "^1.6.7",
+    "dotenv": "^17.2.3",
     "ws": "^8.16.0"
   },
   "engines": {
