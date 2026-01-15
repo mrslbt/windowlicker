@@ -1,24 +1,18 @@
 const http = require('http');
 const CONFIG = require('./src/config');
 const binanceService = require('./src/services/binance');
-const windowLickerStrategy = require('./src/strategies/window-licker');
+
 const ethHourlyStrategy = require('./src/strategies/eth-hourly');
 
 async function main() {
-  console.log('Starting Bot...');
-  console.log(`Strategies: ${CONFIG.ACTIVE_STRATEGIES.join(', ')}`);
+  console.log('Starting Windowlicker Bot (ETH Hourly)...');
+  console.log(`Strategies: ETH_HOURLY`);
 
   // Connect Shared Services
   binanceService.connect();
 
-  // Start Active Strategies
-  if (CONFIG.ACTIVE_STRATEGIES.includes('ALL') || CONFIG.ACTIVE_STRATEGIES.includes('WINDOW_LICKER')) {
-    windowLickerStrategy.start();
-  }
-
-  if (CONFIG.ACTIVE_STRATEGIES.includes('ALL') || CONFIG.ACTIVE_STRATEGIES.includes('ETH_HOURLY')) {
-    ethHourlyStrategy.start();
-  }
+  // Start Strategy
+  ethHourlyStrategy.start();
 
   // Health Check Server
   const server = http.createServer((req, res) => {

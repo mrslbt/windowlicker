@@ -11,19 +11,7 @@ const CONFIG = {
     ETH_HOURLY_WEBHOOK: process.env.DISCORD_WEBHOOK_ETH_HOURLY,
   },
 
-  // Window Licker Strategy Config
-  WINDOW_LICKER: {
-    TARGET_ASSET: process.env.WINDOW_LICKER_ASSET || 'ETH',
-    ENTRY_WINDOW_START: 4,
-    ENTRY_WINDOW_END: 2,
-    EXIT_ALERT_TIME: 1,
-    MIN_LEAN_THRESHOLD: 0.55,
-    STRONG_LEAN_THRESHOLD: 0.65,
-    MARKET_REFRESH_MS: 5000,
-    SIGNAL_COOLDOWN_MS: 60000,
-    CLOB_API: 'https://clob.polymarket.com',
-    GAMMA_API: 'https://gamma-api.polymarket.com',
-  },
+
 
   // ETH Hourly Strategy Config
   ETH_HOURLY: {
