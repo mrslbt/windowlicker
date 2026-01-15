@@ -49,7 +49,9 @@ class WindowLickerStrategy {
             // Try to fetch markets "btc-updown-15m-..."
             // NOTE: The original code logic logic hardcoded "btc-updown-15m-"
             // We will stick to that logic for now.
-            const slug = `btc-updown-15m-${ts}`;
+            // Dynamic slug based on config
+            const assetPrefix = CONFIG.WINDOW_LICKER.TARGET_ASSET.toLowerCase();
+            const slug = `${assetPrefix}-updown-15m-${ts}`;
             const market = await polymarketService.getMarketBySlug(slug);
             if (market) markets.push(market);
         }
@@ -101,7 +103,8 @@ class WindowLickerStrategy {
         const downOdds = down;
         const leadingSide = upOdds > downOdds ? 'UP' : 'DOWN';
         const leadingOdds = Math.max(upOdds, downOdds);
-        const btcPrice = binanceService.getPrices().btc;
+        const targetAsset = CONFIG.WINDOW_LICKER.TARGET_ASSET.toLowerCase();
+        const assetPrice = binanceService.getPrices()[targetAsset];
 
         // Entry
         if (
@@ -122,7 +125,7 @@ class WindowLickerStrategy {
                         { name: 'Action', value: `**BUY ${leadingSide} (YES)**`, inline: true },
                         { name: 'Current Odds', value: `${(leadingOdds * 100).toFixed(1)}%`, inline: true },
                         { name: 'Time Remaining', value: `${minutesRemaining.toFixed(1)}m`, inline: true },
-                        { name: 'BTC Price', value: `$${btcPrice?.toLocaleString() || 'N/A'}`, inline: true }
+                        { name: `${CONFIG.WINDOW_LICKER.TARGET_ASSET} Price`, value: `$${assetPrice?.toLocaleString() || 'N/A'}`, inline: true }
                     ]
                 );
 

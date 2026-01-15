@@ -13,6 +13,7 @@ const CONFIG = {
 
   // Window Licker Strategy Config
   WINDOW_LICKER: {
+    TARGET_ASSET: process.env.WINDOW_LICKER_ASSET || 'ETH',
     ENTRY_WINDOW_START: 4,
     ENTRY_WINDOW_END: 2,
     EXIT_ALERT_TIME: 1,
