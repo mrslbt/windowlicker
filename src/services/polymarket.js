@@ -3,7 +3,7 @@ const CONFIG = require('../config');
 
 class PolymarketService {
     constructor() {
-        this.gammaApi = CONFIG.WINDOW_LICKER.GAMMA_API; // Shared base URL
+        this.gammaApi = CONFIG.ETH_HOURLY.GAMMA_API; // Shared base URL
     }
 
     async getMarketBySlug(slug) {
