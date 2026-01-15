@@ -4,3 +4,5 @@ npm start
  ETH
  cd ~/Desktop/code_related/window-licker-bot
   node eth-hourly.js
+
+   node eth-hourly.js

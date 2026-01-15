@@ -1,10 +1,13 @@
 /**
- * ETH Hourly Watcher - Polymarket Hourly UP/DOWN Signal Bot
+ * ETH Hourly Watcher v3 - Cement Wins Edition
  *
- * Features:
- * - IMMEDIATE alert when price moves $8+ from open
- * - Shows Polymarket odds so you know if still worth buying
- * - Clear actionable notifications
+ * Strategy:
+ * - Only alerts on $12+ moves (not noise)
+ * - BTC confirmation (same direction = safer)
+ * - Optimal entry window: minute 40-50
+ * - Polymarket odds check (<75% = good entry)
+ * - Liquidation cascade detection (big signal)
+ * - Clear BUY/SKIP recommendation
  */
 
 const WebSocket = require('ws');
@@ -14,39 +17,63 @@ const axios = require('axios');
 const CONFIG = {
   DISCORD_WEBHOOK: 'https://discord.com/api/webhooks/1460806039011328171/kniEallTw7QPWTMSvLr2DWl4Vc4AyBVDfmdo2EKoYY9unp2m_RYq-kWzb9k7plE4tKp6',
 
-  // IMMEDIATE ALERT: $8 move triggers alert right away
-  IMMEDIATE_THRESHOLD_USD: 8,
+  // Price thresholds
+  MOVE_THRESHOLD_USD: 12,           // Only alert on $12+ moves
+  REALERT_INCREMENT_USD: 6,         // Re-alert every additional $6
 
-  // Re-alert every $5 additional move
-  REALERT_INCREMENT_USD: 5,
+  // Entry window (minutes into hour)
+  ENTRY_WINDOW_START: 40,           // Start alerting at minute 40
+  ENTRY_WINDOW_END: 52,             // Stop at minute 52 (too late after)
 
-  // Polymarket API
+  // Skip hours (ET timezone) - low liquidity, choppy
+  SKIP_HOURS_ET: [3, 4, 5],         // 3-5 AM ET
+
+  // Odds thresholds
+  MAX_ODDS_FOR_BUY: 0.75,           // Skip if odds > 75%
+  GOOD_ODDS: 0.65,                  // Great entry if < 65%
+
+  // Liquidation threshold
+  LIQUIDATION_THRESHOLD: 50000000,  // $50M in liquidations = big signal
+
+  // BTC confirmation - ETH $12 move ~ BTC $150-200 move (ratio ~15x)
+  BTC_CONFIRM_THRESHOLD: 150,
+
+  // API endpoints
   GAMMA_API: 'https://gamma-api.polymarket.com',
+  COINGLASS_API: 'https://open-api.coinglass.com/public/v2',
 
-  // Polling intervals
+  // Intervals
   PRICE_CHECK_INTERVAL: 2000,
-  ODDS_REFRESH_INTERVAL: 5000,
-  STATUS_PRINT_INTERVAL: 10000,
+  STATUS_PRINT_INTERVAL: 30000,
 };
 
 // ============ STATE ============
 const state = {
-  currentPrice: null,
-  hourOpenPrice: null,
-  hourOpenTime: null,
+  // ETH data
+  ethPrice: null,
+  ethHourOpen: null,
+  ethHourOpenTime: null,
+
+  // BTC data
+  btcPrice: null,
+  btcHourOpen: null,
 
   // Polymarket odds
   upOdds: null,
   downOdds: null,
-  marketSlug: null,
+
+  // Liquidations (last 1 hour)
+  recentLiquidations: 0,
+  liquidationDirection: null,  // 'long' or 'short'
 
   // Alert tracking
+  alertSentThisHour: false,
   lastAlertMoveUSD: null,
-  lastAlertDirection: null,
-  immediateAlertSent: false,
 
-  isConnected: false,
-  ws: null
+  // Connections
+  ethWs: null,
+  btcWs: null,
+  isConnected: false
 };
 
 // ============ HELPERS ============
@@ -59,30 +86,56 @@ function getMinutesRemaining() {
   return 60 - getMinutesIntoHour();
 }
 
-function getMoveUSD() {
-  if (!state.currentPrice || !state.hourOpenPrice) return 0;
-  return state.currentPrice - state.hourOpenPrice;
+function getCurrentHourET() {
+  const now = new Date();
+  const etTime = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
+  return etTime.getHours();
+}
+
+function isInEntryWindow() {
+  const mins = getMinutesIntoHour();
+  return mins >= CONFIG.ENTRY_WINDOW_START && mins <= CONFIG.ENTRY_WINDOW_END;
+}
+
+function isSkipHour() {
+  const hourET = getCurrentHourET();
+  return CONFIG.SKIP_HOURS_ET.includes(hourET);
+}
+
+function getEthMoveUSD() {
+  if (!state.ethPrice || !state.ethHourOpen) return 0;
+  return state.ethPrice - state.ethHourOpen;
+}
+
+function getBtcMoveUSD() {
+  if (!state.btcPrice || !state.btcHourOpen) return 0;
+  return state.btcPrice - state.btcHourOpen;
 }
 
 function getDirection() {
-  return getMoveUSD() >= 0 ? 'UP' : 'DOWN';
+  return getEthMoveUSD() >= 0 ? 'UP' : 'DOWN';
+}
+
+function isBtcConfirming() {
+  const ethMove = getEthMoveUSD();
+  const btcMove = getBtcMoveUSD();
+
+  // Both moving same direction with significant BTC move
+  if (ethMove > 0 && btcMove > CONFIG.BTC_CONFIRM_THRESHOLD) return true;
+  if (ethMove < 0 && btcMove < -CONFIG.BTC_CONFIRM_THRESHOLD) return true;
+  return false;
 }
 
 function formatTime(date) {
   return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 }
 
-function getOddsAssessment(odds) {
-  if (odds >= 0.85) return { text: 'TOO LATE', color: 0x666666, worth: false };
-  if (odds >= 0.75) return { text: 'RISKY', color: 0xffaa00, worth: false };
-  if (odds >= 0.65) return { text: 'OK', color: 0xffff00, worth: true };
-  if (odds >= 0.55) return { text: 'GOOD', color: 0x00ff00, worth: true };
-  return { text: 'GREAT', color: 0x00ff00, worth: true };
+function formatUSD(num) {
+  return num >= 0 ? `+$${num.toFixed(2)}` : `-$${Math.abs(num).toFixed(2)}`;
 }
 
 // ============ POLYMARKET ODDS ============
 function getCurrentMarketSlug() {
-  // Get current time in ET (Eastern Time)
   const now = new Date();
   const etTime = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
 
@@ -94,37 +147,28 @@ function getCurrentMarketSlug() {
   let hour = etTime.getHours();
   const ampm = hour >= 12 ? 'pm' : 'am';
 
-  // Convert to 12-hour format
   if (hour === 0) hour = 12;
   else if (hour > 12) hour -= 12;
 
-  // Format: ethereum-up-or-down-january-14-3pm-et
   return `ethereum-up-or-down-${month}-${day}-${hour}${ampm}-et`;
 }
 
 async function fetchPolymarketOdds() {
   try {
     const slug = getCurrentMarketSlug();
-
     const response = await axios.get(`${CONFIG.GAMMA_API}/events`, {
       params: { slug },
       timeout: 5000
     });
 
     if (response.data && response.data.length > 0) {
-      const event = response.data[0];
-      const market = event.markets?.[0];
-
+      const market = response.data[0].markets?.[0];
       if (market) {
         let outcomePrices = market.outcomePrices;
-        if (typeof outcomePrices === 'string') {
-          outcomePrices = JSON.parse(outcomePrices);
-        }
-
         let outcomes = market.outcomes;
-        if (typeof outcomes === 'string') {
-          outcomes = JSON.parse(outcomes);
-        }
+
+        if (typeof outcomePrices === 'string') outcomePrices = JSON.parse(outcomePrices);
+        if (typeof outcomes === 'string') outcomes = JSON.parse(outcomes);
 
         if (outcomePrices && outcomes) {
           for (let i = 0; i < outcomes.length; i++) {
@@ -135,59 +179,222 @@ async function fetchPolymarketOdds() {
               state.downOdds = parseFloat(outcomePrices[i]);
             }
           }
-          state.marketSlug = slug;
         }
       }
     }
-  } catch (error) {
-    // Silently fail - odds just won't be shown
+  } catch (e) {
+    // Silent fail
   }
 }
 
-// ============ DISCORD NOTIFICATIONS ============
-async function sendImmediateAlert(direction, moveUSD) {
-  const absMoveUSD = Math.abs(moveUSD);
-  const minsRemaining = getMinutesRemaining();
-  const minsIntoHour = getMinutesIntoHour();
+// ============ LIQUIDATION DATA ============
+async function fetchLiquidations() {
+  try {
+    // Fetch from Coinglass public API
+    const response = await axios.get('https://open-api.coinglass.com/public/v2/liquidation_history', {
+      params: { symbol: 'ETH', time_type: 'h1' },
+      timeout: 5000
+    });
 
-  // Get current odds for the winning direction
-  const currentOdds = direction === 'UP' ? state.upOdds : state.downOdds;
-  const assessment = currentOdds ? getOddsAssessment(currentOdds) : null;
+    if (response.data?.data) {
+      const data = response.data.data;
+      const longLiq = data.longLiquidationUsd || 0;
+      const shortLiq = data.shortLiquidationUsd || 0;
 
-  const color = direction === 'UP' ? 0x00ff00 : 0xff0000;
-  const emoji = direction === 'UP' ? '🟢' : '🔴';
-  const arrow = direction === 'UP' ? '📈' : '📉';
-
-  // Build clear message
-  let buyAdvice = '';
-  let oddsDisplay = 'N/A';
-
-  if (currentOdds) {
-    oddsDisplay = `${(currentOdds * 100).toFixed(0)}%`;
-    if (assessment.worth) {
-      buyAdvice = `BUY ${direction} @ ${oddsDisplay} odds`;
-    } else {
-      buyAdvice = `${assessment.text} - Odds already at ${oddsDisplay}`;
+      state.recentLiquidations = longLiq + shortLiq;
+      state.liquidationDirection = longLiq > shortLiq ? 'long' : 'short';
     }
-  } else {
-    buyAdvice = `BUY ${direction} - Check Polymarket for odds`;
+  } catch (e) {
+    // Try alternative endpoint or silent fail
+    try {
+      const response = await axios.get('https://api.coinglass.com/api/futures/liquidation/detail?symbol=ETH', {
+        timeout: 5000
+      });
+      if (response.data?.data) {
+        state.recentLiquidations = response.data.data.totalVolUsd || 0;
+      }
+    } catch (e2) {
+      // Silent fail - liquidation data optional
+    }
+  }
+}
+
+// ============ BINANCE WEBSOCKETS ============
+function connectBinance() {
+  console.log('[Binance] Connecting to ETH & BTC feeds...');
+
+  // ETH WebSocket
+  const ethWs = new WebSocket('wss://stream.binance.com:9443/ws/ethusdt@aggTrade');
+  state.ethWs = ethWs;
+
+  ethWs.on('open', () => {
+    console.log('[Binance] ETH connected');
+    state.isConnected = true;
+    fetchHourlyCandles();
+  });
+
+  ethWs.on('message', (data) => {
+    try {
+      const trade = JSON.parse(data);
+      state.ethPrice = parseFloat(trade.p);
+    } catch (e) {}
+  });
+
+  ethWs.on('close', () => {
+    console.log('[Binance] ETH disconnected, reconnecting...');
+    setTimeout(() => connectBinance(), 5000);
+  });
+
+  ethWs.on('error', (e) => console.error('[ETH WS Error]', e.message));
+
+  // BTC WebSocket
+  const btcWs = new WebSocket('wss://stream.binance.com:9443/ws/btcusdt@aggTrade');
+  state.btcWs = btcWs;
+
+  btcWs.on('open', () => console.log('[Binance] BTC connected'));
+
+  btcWs.on('message', (data) => {
+    try {
+      const trade = JSON.parse(data);
+      state.btcPrice = parseFloat(trade.p);
+    } catch (e) {}
+  });
+
+  btcWs.on('error', (e) => console.error('[BTC WS Error]', e.message));
+
+  // Heartbeat
+  setInterval(() => {
+    if (ethWs.readyState === WebSocket.OPEN) ethWs.ping();
+    if (btcWs.readyState === WebSocket.OPEN) btcWs.ping();
+  }, 30000);
+}
+
+async function fetchHourlyCandles() {
+  try {
+    // Fetch ETH and BTC candles in parallel
+    const [ethRes, btcRes] = await Promise.all([
+      axios.get('https://api.binance.com/api/v3/klines', {
+        params: { symbol: 'ETHUSDT', interval: '1h', limit: 1 }
+      }),
+      axios.get('https://api.binance.com/api/v3/klines', {
+        params: { symbol: 'BTCUSDT', interval: '1h', limit: 1 }
+      })
+    ]);
+
+    if (ethRes.data?.[0]) {
+      const [openTime, openPrice] = ethRes.data[0];
+      const wasNewHour = state.ethHourOpenTime !== openTime;
+
+      state.ethHourOpen = parseFloat(openPrice);
+      state.ethHourOpenTime = openTime;
+
+      if (wasNewHour) {
+        state.alertSentThisHour = false;
+        state.lastAlertMoveUSD = null;
+        console.log(`[New Hour] ETH Open: $${state.ethHourOpen.toFixed(2)}`);
+      }
+    }
+
+    if (btcRes.data?.[0]) {
+      state.btcHourOpen = parseFloat(btcRes.data[0][1]);
+    }
+  } catch (e) {
+    console.error('[Candle fetch error]', e.message);
+  }
+}
+
+// ============ DECISION ENGINE ============
+function evaluateTrade() {
+  const ethMove = getEthMoveUSD();
+  const absMove = Math.abs(ethMove);
+  const direction = getDirection();
+  const minsRemaining = getMinutesRemaining();
+  const currentOdds = direction === 'UP' ? state.upOdds : state.downOdds;
+
+  const checks = {
+    moveSize: absMove >= CONFIG.MOVE_THRESHOLD_USD,
+    entryWindow: isInEntryWindow(),
+    notSkipHour: !isSkipHour(),
+    btcConfirms: isBtcConfirming(),
+    oddsGood: currentOdds ? currentOdds < CONFIG.MAX_ODDS_FOR_BUY : true,
+    liquidationSignal: state.recentLiquidations >= CONFIG.LIQUIDATION_THRESHOLD
+  };
+
+  const passedChecks = Object.values(checks).filter(Boolean).length;
+  const totalChecks = Object.keys(checks).length;
+
+  let recommendation = 'SKIP';
+  let confidence = 'LOW';
+
+  // Decision logic
+  if (!checks.moveSize) {
+    recommendation = 'WAIT';
+    confidence = 'N/A';
+  } else if (!checks.entryWindow) {
+    recommendation = 'WAIT';
+    confidence = 'N/A';
+  } else if (!checks.notSkipHour) {
+    recommendation = 'SKIP';
+    confidence = 'LOW';
+  } else if (!checks.oddsGood) {
+    recommendation = 'SKIP';
+    confidence = 'TOO LATE';
+  } else if (passedChecks >= 5) {
+    recommendation = 'BUY';
+    confidence = 'HIGH';
+  } else if (passedChecks >= 4) {
+    recommendation = 'BUY';
+    confidence = 'MEDIUM';
+  } else if (passedChecks >= 3) {
+    recommendation = 'SMALL BET';
+    confidence = 'LOW';
   }
 
+  return {
+    recommendation,
+    confidence,
+    checks,
+    passedChecks,
+    totalChecks,
+    direction,
+    ethMove,
+    btcMove: getBtcMoveUSD(),
+    currentOdds,
+    minsRemaining,
+    liquidations: state.recentLiquidations
+  };
+}
+
+// ============ DISCORD ALERT ============
+async function sendAlert(evaluation) {
+  const { recommendation, confidence, checks, direction, ethMove, btcMove, currentOdds, minsRemaining, liquidations } = evaluation;
+
+  const absMove = Math.abs(ethMove);
+  const oddsDisplay = currentOdds ? `${(currentOdds * 100).toFixed(0)}%` : 'N/A';
+
+  // Color based on recommendation
+  let color = 0x666666; // gray
+  if (recommendation === 'BUY' && confidence === 'HIGH') color = 0x00ff00; // green
+  else if (recommendation === 'BUY') color = 0x90EE90; // light green
+  else if (recommendation === 'SMALL BET') color = 0xffff00; // yellow
+  else if (recommendation === 'SKIP') color = 0xff0000; // red
+
+  const emoji = direction === 'UP' ? '📈' : '📉';
+  const actionEmoji = recommendation === 'BUY' ? '✅' : recommendation === 'SMALL BET' ? '⚠️' : '❌';
+
   const embed = {
-    title: `${arrow} ETH MOVED $${absMoveUSD.toFixed(0)} ${direction}!`,
-    description: assessment?.worth
-      ? `**${buyAdvice}**`
-      : `**${buyAdvice}**`,
-    color: assessment?.color || color,
+    title: `${emoji} ETH ${formatUSD(ethMove)} | ${actionEmoji} ${recommendation}`,
+    description: `**Confidence: ${confidence}**`,
+    color: color,
     fields: [
       {
-        name: '💰 Price Move',
-        value: `**$${absMoveUSD.toFixed(2)} ${direction}**`,
+        name: '💰 ETH Move',
+        value: `**${formatUSD(ethMove)}**`,
         inline: true
       },
       {
-        name: '🎯 Polymarket Odds',
-        value: `**${direction}: ${oddsDisplay}**`,
+        name: '₿ BTC Move',
+        value: `**${formatUSD(btcMove)}**`,
         inline: true
       },
       {
@@ -196,245 +403,149 @@ async function sendImmediateAlert(direction, moveUSD) {
         inline: true
       },
       {
-        name: '📊 Hour Open',
-        value: `$${state.hourOpenPrice?.toFixed(2)}`,
+        name: '🎯 Odds',
+        value: `**${direction}: ${oddsDisplay}**`,
         inline: true
       },
       {
-        name: '💵 Current Price',
-        value: `$${state.currentPrice?.toFixed(2)}`,
+        name: '💥 Liquidations',
+        value: `$${(liquidations / 1000000).toFixed(1)}M`,
         inline: true
       },
       {
-        name: '📍 Minutes In',
-        value: `${minsIntoHour.toFixed(0)}/60`,
+        name: '📊 Checks',
+        value: `${evaluation.passedChecks}/${evaluation.totalChecks}`,
         inline: true
       }
     ],
     footer: {
-      text: assessment?.worth
-        ? `WORTH BUYING - ${assessment.text} entry`
-        : `MIGHT BE TOO LATE - ${assessment?.text || 'Check odds'}`
+      text: `ETH: $${state.ethPrice?.toFixed(2)} | BTC: $${state.btcPrice?.toFixed(0)}`
     },
     timestamp: new Date().toISOString()
   };
 
-  // Add recommendation field
-  if (assessment) {
-    let recommendation = '';
-    if (assessment.worth && minsRemaining > 10) {
-      recommendation = `Entry looks ${assessment.text}. ${minsRemaining.toFixed(0)} mins to settlement.`;
-    } else if (assessment.worth && minsRemaining <= 10) {
-      recommendation = `Quick! Only ${minsRemaining.toFixed(0)} mins left. Entry ${assessment.text}.`;
-    } else {
-      recommendation = `Odds at ${oddsDisplay} - most profit already taken. Skip or small bet only.`;
-    }
+  // Add checklist
+  const checklistLines = [
+    `${checks.moveSize ? '✅' : '❌'} Move $12+ (${formatUSD(ethMove)})`,
+    `${checks.entryWindow ? '✅' : '❌'} Entry window (min 40-52)`,
+    `${checks.btcConfirms ? '✅' : '❌'} BTC confirms (${formatUSD(btcMove)})`,
+    `${checks.oddsGood ? '✅' : '❌'} Odds < 75% (${oddsDisplay})`,
+    `${checks.notSkipHour ? '✅' : '❌'} Good trading hour`,
+    `${checks.liquidationSignal ? '✅' : '⬜'} Liquidation cascade`
+  ];
 
-    embed.fields.push({
-      name: '💡 Recommendation',
-      value: recommendation,
-      inline: false
-    });
-  }
+  embed.fields.push({
+    name: '📋 Checklist',
+    value: checklistLines.join('\n'),
+    inline: false
+  });
 
   try {
-    const urgency = assessment?.worth ? '🚨' : '⚠️';
     await axios.post(CONFIG.DISCORD_WEBHOOK, {
-      content: `${urgency} **ETH $${absMoveUSD.toFixed(0)} ${direction}** | ${direction} odds: ${oddsDisplay} | ${minsRemaining.toFixed(0)}m left`,
+      content: `${actionEmoji} **${recommendation}** ${direction} | ETH ${formatUSD(ethMove)} | Odds: ${oddsDisplay} | ${minsRemaining.toFixed(0)}m left`,
       embeds: [embed]
     });
-    console.log(`[${formatTime(new Date())}] ALERT: $${absMoveUSD.toFixed(2)} ${direction} | Odds: ${oddsDisplay}`);
-  } catch (error) {
-    console.error('Discord alert failed:', error.message);
-  }
-}
-
-async function sendUpdateAlert(direction, moveUSD) {
-  const absMoveUSD = Math.abs(moveUSD);
-  const minsRemaining = getMinutesRemaining();
-  const currentOdds = direction === 'UP' ? state.upOdds : state.downOdds;
-  const oddsDisplay = currentOdds ? `${(currentOdds * 100).toFixed(0)}%` : 'N/A';
-
-  const emoji = direction === 'UP' ? '📈' : '📉';
-
-  try {
-    await axios.post(CONFIG.DISCORD_WEBHOOK, {
-      content: `${emoji} **UPDATE: ETH now $${absMoveUSD.toFixed(0)} ${direction}** | Odds: ${oddsDisplay} | ${minsRemaining.toFixed(0)}m left | Price: $${state.currentPrice?.toFixed(2)}`
-    });
-    console.log(`[${formatTime(new Date())}] UPDATE: $${absMoveUSD.toFixed(2)} ${direction}`);
-  } catch (error) {
-    console.error('Discord update failed:', error.message);
-  }
-}
-
-async function sendNewHourAlert() {
-  const hourEnd = new Date();
-  hourEnd.setMinutes(0, 0, 0);
-  hourEnd.setHours(hourEnd.getHours() + 1);
-
-  try {
-    await axios.post(CONFIG.DISCORD_WEBHOOK, {
-      content: `⏰ **NEW HOUR** | ETH Open: **$${state.hourOpenPrice?.toFixed(2)}** | Closes ${formatTime(hourEnd)} | Watching for $${CONFIG.IMMEDIATE_THRESHOLD_USD}+ moves...`
-    });
-  } catch (error) {
-    console.error('New hour alert failed:', error.message);
-  }
-}
-
-// ============ BINANCE WEBSOCKET ============
-function connectBinance() {
-  console.log('[Binance] Connecting...');
-
-  const ws = new WebSocket('wss://stream.binance.com:9443/ws/ethusdt@aggTrade');
-  state.ws = ws;
-
-  ws.on('open', () => {
-    console.log('[Binance] Connected to ETH/USDT');
-    state.isConnected = true;
-    fetchHourlyCandle();
-  });
-
-  ws.on('message', (data) => {
-    try {
-      const trade = JSON.parse(data);
-      state.currentPrice = parseFloat(trade.p);
-    } catch (e) {}
-  });
-
-  ws.on('close', () => {
-    console.log('[Binance] Disconnected, reconnecting...');
-    state.isConnected = false;
-    setTimeout(connectBinance, 5000);
-  });
-
-  ws.on('error', (e) => console.error('[Binance] Error:', e.message));
-
-  setInterval(() => {
-    if (ws.readyState === WebSocket.OPEN) ws.ping();
-  }, 30000);
-}
-
-async function fetchHourlyCandle() {
-  try {
-    const response = await axios.get('https://api.binance.com/api/v3/klines', {
-      params: { symbol: 'ETHUSDT', interval: '1h', limit: 1 }
-    });
-
-    if (response.data?.[0]) {
-      const [openTime, openPrice] = response.data[0];
-      const wasNewHour = state.hourOpenTime !== openTime;
-
-      state.hourOpenPrice = parseFloat(openPrice);
-      state.hourOpenTime = openTime;
-
-      if (wasNewHour) {
-        // Reset for new hour
-        state.immediateAlertSent = false;
-        state.lastAlertMoveUSD = null;
-        state.lastAlertDirection = null;
-
-        console.log(`[New Hour] Open: $${state.hourOpenPrice.toFixed(2)}`);
-        await sendNewHourAlert();
-      }
-    }
+    console.log(`[${formatTime(new Date())}] ALERT: ${recommendation} ${direction} | ${formatUSD(ethMove)}`);
   } catch (e) {
-    console.error('[Candle] Fetch failed:', e.message);
+    console.error('Discord alert failed:', e.message);
   }
 }
 
-// ============ ANALYSIS ============
+// ============ ANALYSIS LOOP ============
 async function analyze() {
-  if (!state.currentPrice || !state.hourOpenPrice) return;
+  if (!state.ethPrice || !state.ethHourOpen) return;
 
-  const moveUSD = getMoveUSD();
-  const absMoveUSD = Math.abs(moveUSD);
-  const direction = getDirection();
+  const ethMove = getEthMoveUSD();
+  const absMove = Math.abs(ethMove);
 
-  // IMMEDIATE ALERT: $8+ move
-  if (absMoveUSD >= CONFIG.IMMEDIATE_THRESHOLD_USD && !state.immediateAlertSent) {
-    await fetchPolymarketOdds(); // Get fresh odds before alerting
-    await sendImmediateAlert(direction, moveUSD);
-    state.immediateAlertSent = true;
-    state.lastAlertMoveUSD = absMoveUSD;
-    state.lastAlertDirection = direction;
-    return;
+  // Only proceed if move is significant AND in entry window
+  if (absMove < CONFIG.MOVE_THRESHOLD_USD) return;
+  if (!isInEntryWindow()) return;
+
+  // Check if we already alerted
+  if (state.alertSentThisHour) {
+    // Re-alert only if move increased significantly
+    if (state.lastAlertMoveUSD !== null) {
+      const additionalMove = absMove - Math.abs(state.lastAlertMoveUSD);
+      if (additionalMove < CONFIG.REALERT_INCREMENT_USD) return;
+    }
   }
 
-  // UPDATE ALERTS: Every additional $5 move
-  if (state.immediateAlertSent && state.lastAlertMoveUSD !== null) {
-    const additionalMove = absMoveUSD - state.lastAlertMoveUSD;
+  // Fetch fresh data
+  await Promise.all([
+    fetchPolymarketOdds(),
+    fetchLiquidations()
+  ]);
 
-    // Same direction, moved more
-    if (additionalMove >= CONFIG.REALERT_INCREMENT_USD && direction === state.lastAlertDirection) {
-      await fetchPolymarketOdds();
-      await sendUpdateAlert(direction, moveUSD);
-      state.lastAlertMoveUSD = absMoveUSD;
-    }
-    // Direction REVERSED significantly
-    else if (direction !== state.lastAlertDirection && absMoveUSD >= CONFIG.IMMEDIATE_THRESHOLD_USD) {
-      await fetchPolymarketOdds();
-      await sendImmediateAlert(direction, moveUSD);
-      state.lastAlertMoveUSD = absMoveUSD;
-      state.lastAlertDirection = direction;
-    }
+  // Evaluate and alert
+  const evaluation = evaluateTrade();
+
+  // Only alert for actionable recommendations
+  if (evaluation.recommendation !== 'WAIT') {
+    await sendAlert(evaluation);
+    state.alertSentThisHour = true;
+    state.lastAlertMoveUSD = ethMove;
   }
 }
 
-// ============ STATUS ============
+// ============ STATUS (minimal) ============
 function printStatus() {
-  if (!state.isConnected || !state.currentPrice) {
+  if (!state.isConnected || !state.ethPrice) {
     console.log('[Status] Waiting for data...');
     return;
   }
 
-  const moveUSD = getMoveUSD();
-  const direction = getDirection();
-  const minsRemaining = getMinutesRemaining();
-  const upOdds = state.upOdds ? `${(state.upOdds * 100).toFixed(0)}%` : '?';
-  const downOdds = state.downOdds ? `${(state.downOdds * 100).toFixed(0)}%` : '?';
-  const slug = getCurrentMarketSlug();
+  const ethMove = getEthMoveUSD();
+  const btcMove = getBtcMoveUSD();
+  const mins = getMinutesIntoHour();
+  const inWindow = isInEntryWindow() ? 'ACTIVE' : 'waiting';
 
   console.log(
     `[${formatTime(new Date())}] ` +
-    `ETH: $${state.currentPrice.toFixed(2)} | ` +
-    `Move: ${moveUSD >= 0 ? '+' : ''}$${moveUSD.toFixed(2)} ${direction} | ` +
-    `Odds: UP ${upOdds} / DOWN ${downOdds} | ` +
-    `${minsRemaining.toFixed(0)}m left`
+    `ETH: ${formatUSD(ethMove)} | BTC: ${formatUSD(btcMove)} | ` +
+    `Min: ${mins.toFixed(0)}/60 | ${inWindow}`
   );
-  console.log(`  Market: ${slug}`);
 }
 
 // ============ MAIN ============
 async function start() {
   console.log('');
-  console.log('══════════════════════════════════════════════');
-  console.log('  ETH HOURLY WATCHER');
-  console.log('══════════════════════════════════════════════');
+  console.log('══════════════════════════════════════════════════════');
+  console.log('  ETH HOURLY WATCHER v3 - CEMENT WINS EDITION');
+  console.log('══════════════════════════════════════════════════════');
   console.log('');
-  console.log(`  IMMEDIATE ALERT: $${CONFIG.IMMEDIATE_THRESHOLD_USD}+ move`);
-  console.log(`  UPDATE ALERTS: Every additional $${CONFIG.REALERT_INCREMENT_USD}`);
-  console.log('  Shows Polymarket odds + buy recommendation');
+  console.log('  Alerts only when:');
+  console.log(`    - ETH moves $${CONFIG.MOVE_THRESHOLD_USD}+ from open`);
+  console.log(`    - Entry window: minute ${CONFIG.ENTRY_WINDOW_START}-${CONFIG.ENTRY_WINDOW_END}`);
+  console.log('    - Includes BUY/SKIP recommendation');
   console.log('');
-  console.log('══════════════════════════════════════════════');
+  console.log('  Checks: Move size, BTC confirm, Odds, Liquidations');
+  console.log('');
+  console.log('══════════════════════════════════════════════════════');
   console.log('');
 
   connectBinance();
+
   await new Promise(r => setTimeout(r, 3000));
 
-  // Fetch initial odds
-  await fetchPolymarketOdds();
+  // Initial data fetch
+  await Promise.all([
+    fetchPolymarketOdds(),
+    fetchLiquidations()
+  ]);
 
+  // Start loops
   setInterval(analyze, CONFIG.PRICE_CHECK_INTERVAL);
-  setInterval(fetchHourlyCandle, 60000);
-  setInterval(fetchPolymarketOdds, CONFIG.ODDS_REFRESH_INTERVAL);
+  setInterval(fetchHourlyCandles, 60000);
   setInterval(printStatus, CONFIG.STATUS_PRINT_INTERVAL);
 
-  console.log('Watching for $8+ moves...\n');
+  console.log('Bot running. Only alerts on $12+ moves in entry window.\n');
 }
 
 process.on('SIGINT', () => {
   console.log('\nShutting down...');
-  if (state.ws) state.ws.close();
+  if (state.ethWs) state.ethWs.close();
+  if (state.btcWs) state.btcWs.close();
   process.exit(0);
 });
 
