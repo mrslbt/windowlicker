@@ -189,13 +189,6 @@ class EthHourlyStrategy {
         } catch (e) { /* ignore */ }
 
         // Store relative volume
-        if (this.state.avgVolume20) {
-            this.state.currentVolRelative = currentVol / this.state.avgVolume20;
-        }
-
-        // Only check in window (last 20 mins: 40-60)
-        if (minutes < CONFIG.ETH_HOURLY.ENTRY_WINDOW_START) return;
-
         // Gather Data
         const ethMove = this.getEthMoveUSD();
         const btcMove = this.getBtcMoveUSD();
@@ -227,11 +220,8 @@ class EthHourlyStrategy {
         this.state.lastSignalStrength = scoreData.strength;
 
         // Check if we should alert
-        // Trigger: High Score OR simply exceeding the ATR threshold with decent score?
-        // Let's stick to the "Actionable" threshold.
-        // We alert if Score >= 50 AND we haven't alerted this hour (or significant update).
-        // Actually, user wants "Profitability", so let's be strict. Score >= 70 is a BUY.
-        // But we should alert on interesting setups (Score > 50) so they can see it.
+        // Only alert in window (last 20 mins: 40-60)
+        if (minutes < CONFIG.ETH_HOURLY.ENTRY_WINDOW_START) return;
 
         if (scoreData.score < 50 && !this.state.alertSentThisHour) return; // Ignore noise
         if (this.state.alertSentThisHour) return; // Prevent spam for now

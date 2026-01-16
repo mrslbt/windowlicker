@@ -103,6 +103,11 @@ class DiscordService {
             const isInWindow = minutes >= CONFIG.ETH_HOURLY.ENTRY_WINDOW_START &&
                 minutes <= CONFIG.ETH_HOURLY.ENTRY_WINDOW_END;
 
+            const timeToWindow = minutes < CONFIG.ETH_HOURLY.ENTRY_WINDOW_START
+                ? CONFIG.ETH_HOURLY.ENTRY_WINDOW_START - minutes
+                : 0;
+            const timeLeft = 60 - minutes;
+
             // Build the embed
             // Calculate Signal Strength & Bar
             const score = state.score || 0;
