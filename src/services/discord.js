@@ -132,9 +132,13 @@ class DiscordService {
                 .setFooter({ text: 'Window Licker Bot' });
 
             // 1. Market Data
+            const ethSign = state.ethMove >= 0 ? 1 : -1;
+            const btcSign = state.btcMove >= 0 ? 1 : -1;
+            const btcCorrelation = ethSign === btcSign; // True = Confirmed, False = Divergence
+
             embed.addFields(
                 { name: '💰 Market', value: `**$${state.ethPrice?.toFixed(2)}**\n${state.ethMove >= 0 ? '📈' : '📉'} ${state.ethMove >= 0 ? '+' : ''}$${state.ethMove?.toFixed(2)}`, inline: true },
-                { name: '₿ BTC', value: `${state.btcMove >= 0 ? '✅' : '⚠️'} ${state.btcMove >= 0 ? '+' : ''}$${state.btcMove?.toFixed(2)}`, inline: true },
+                { name: '₿ BTC', value: `${btcCorrelation ? '✅' : '⚠️'} ${state.btcMove >= 0 ? '+' : ''}$${state.btcMove?.toFixed(2)}`, inline: true },
                 { name: '⏱️ Window', value: `${isInWindow ? '🟢 OPEN' : '🔴 CLOSED'}\n${timeLeft}m left`, inline: true }
             );
 
