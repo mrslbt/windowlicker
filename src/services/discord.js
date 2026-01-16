@@ -21,6 +21,8 @@ class DiscordService {
             return;
         }
 
+        console.log('[Discord] Initializing bot...');
+
         this.client = new Client({
             intents: [GatewayIntentBits.Guilds]
         });
@@ -67,18 +69,17 @@ class DiscordService {
         const rest = new REST({ version: '10' }).setToken(CONFIG.DISCORD.BOT_TOKEN);
 
         try {
-            console.log('[Discord] Registering slash commands...');
+            const appId = Buffer.from(CONFIG.DISCORD.BOT_TOKEN.split('.')[0], 'base64').toString();
+            console.log(`[Discord] Registering slash commands for app ${appId} in guild ${CONFIG.DISCORD.GUILD_ID}...`);
+
             await rest.put(
-                Routes.applicationGuildCommands(
-                    // We need to get the application ID from the token
-                    Buffer.from(CONFIG.DISCORD.BOT_TOKEN.split('.')[0], 'base64').toString(),
-                    CONFIG.DISCORD.GUILD_ID
-                ),
+                Routes.applicationGuildCommands(appId, CONFIG.DISCORD.GUILD_ID),
                 { body: commands }
             );
             console.log('[Discord] Slash commands registered successfully');
         } catch (error) {
             console.error('[Discord] Failed to register commands:', error.message);
+            if (error.code) console.error('[Discord] Error code:', error.code);
         }
     }
 
