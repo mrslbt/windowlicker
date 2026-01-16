@@ -122,9 +122,9 @@ class EthHourlyStrategy {
         const btcPrice = binanceService.getPrices().btc;
         const liquidations = await coinglassService.getLiquidations('ETH');
 
-        // Fetch Funding Rate
+        // Fetch Premium Index (real-time bounce risk)
         const direction = ethMove >= 0 ? 'UP' : 'DOWN';
-        const fundingAnalysis = await binanceService.analyzeFundingRate('ETH', direction);
+        const premiumAnalysis = await binanceService.analyzePremium('ETH', direction);
 
         // --- Checklist Logic ---
         // Send alert if price crosses threshold OR we haven't sent one yet in this window and move is significant
@@ -157,12 +157,12 @@ class EthHourlyStrategy {
         const liquidationsVal = liquidations.totalVolUsd || 0;
         const liqEmoji = liquidationsVal > CONFIG.ETH_HOURLY.LIQUIDATION_THRESHOLD ? '💥' : '⬜';
 
-        // Funding Rate Check (PRIMARY bounce risk indicator)
-        const fundingEmoji = fundingAnalysis.bounceRisk === 'LOW' ? '✅' :
-                            fundingAnalysis.bounceRisk === 'MEDIUM' ? '⚠️' : '❌';
-        const fundingRateDisplay = fundingAnalysis.rate >= 0 ?
-                                   `+${fundingAnalysis.rate.toFixed(4)}%` :
-                                   `${fundingAnalysis.rate.toFixed(4)}%`;
+        // Premium Index Check (REAL-TIME bounce risk indicator)
+        const premiumEmoji = premiumAnalysis.bounceRisk === 'LOW' ? '✅' :
+                            premiumAnalysis.bounceRisk === 'MEDIUM' ? '⚠️' : '❌';
+        const premiumDisplay = premiumAnalysis.premium >= 0 ?
+                               `+${premiumAnalysis.premium.toFixed(3)}%` :
+                               `${premiumAnalysis.premium.toFixed(3)}%`;
 
         // Construct Embed
         const embed = discordService.createEmbed(
@@ -180,12 +180,12 @@ class EthHourlyStrategy {
                         `${btcEmoji} BTC confirms (${btcMove >= 0 ? '+' : ''}${btcMove.toFixed(2)})\n` +
                         `${oddsEmoji} Odds < 75% (${oddsVal})\n` +
                         `${hourEmoji} Good trading hour\n` +
-                        `${fundingEmoji} Low bounce risk (${fundingRateDisplay})`
+                        `${premiumEmoji} Low bounce risk (${premiumDisplay})`
                 },
                 {
-                    name: 'Funding Analysis', value:
-                        `${fundingAnalysis.analysis}\n` +
-                        `Bounce Risk: **${fundingAnalysis.bounceRisk}**`
+                    name: 'Premium Analysis (Real-time)', value:
+                        `${premiumAnalysis.analysis}\n` +
+                        `Bounce Risk: **${premiumAnalysis.bounceRisk}**`
                 }
             ]
         );

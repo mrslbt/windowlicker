@@ -30,7 +30,7 @@ The bot targets **Polymarket ETH hourly markets** (ETH up or down by end of hour
 - Only alerts during minutes **40-52** of each hour (last 20 minutes)
 - Requires ETH to move **$12+** from the hourly open price
 - Runs a 6-point checklist to determine BUY / SKIP / SMALL BET
-- Uses **funding rate** to assess bounce risk before entry
+- Uses **premium index** (real-time) to assess bounce risk before entry
 
 ### Why Last 20 Minutes?
 
@@ -53,10 +53,10 @@ Checklist:
  BTC Confirms     ✅  (+$245)
  Odds < 75%       ✅  (62%)
  Good Hour        ✅  (2 PM ET)
- Low Bounce Risk  ✅  (+0.0082%)
+ Low Bounce Risk  ✅  (+0.032%)
 
-Funding Analysis:
- Neutral funding - no crowding
+Premium Analysis (Real-time):
+ Neutral premium - no crowding
  Bounce Risk: LOW
 
 Recommendation: BUY
@@ -71,7 +71,7 @@ Recommendation: BUY
 | **BTC Confirms** | Bitcoin moving same direction | BTC move matches ETH direction, $150+ |
 | **Odds < 75%** | Market hasn't fully priced in the move | Polymarket odds < 75% |
 | **Good Hour** | Avoid low-liquidity hours | NOT 3-5 AM ET |
-| **Low Bounce Risk** | Funding rate shows trade isn't crowded | See funding rate section below |
+| **Low Bounce Risk** | Premium shows trade isn't crowded | See premium section below |
 
 ### Recommendation Meanings
 
@@ -88,44 +88,54 @@ Recommendation: BUY
 These conditions override the checklist and force SKIP:
 - **Odds > 75%** - Too late, move already priced in
 - **Skip Hours (3-5 AM ET)** - Low liquidity, unreliable
-- **HIGH Bounce Risk** - Funding rate shows crowded trade
+- **HIGH Bounce Risk** - Premium shows crowded trade
 
 ---
 
-## Funding Rate - Bounce Risk Indicator
+## Premium Index - Bounce Risk Indicator (Real-Time)
 
-The funding rate tells you **how crowded the current trade is**. This is the key indicator for predicting if a move will continue or bounce back.
+The premium index tells you **how crowded the current trade is RIGHT NOW**. Unlike funding rate (which updates every 8 hours), premium updates every second.
 
-### How It Works
+### What Is Premium?
 
 ```
-Positive funding → Longs pay shorts → Too many longs (bullish crowded)
-Negative funding → Shorts pay longs → Too many shorts (bearish crowded)
+Premium = (Futures Price - Spot Price) / Spot Price
+
+Positive premium → Futures > Spot → Longs crowded (paying premium to be long)
+Negative premium → Futures < Spot → Shorts crowded (paying premium to be short)
 ```
+
+### Why It Predicts Bounces
+
+When one side is crowded:
+- They're paying a premium to hold their position
+- Any small move against them triggers panic closing
+- This causes the bounce
 
 ### Reading the Signal
 
 **When buying UP:**
-| Funding Rate | Meaning | Bounce Risk |
-|--------------|---------|-------------|
-| Very positive (>0.03%) | Longs extremely crowded | HIGH - squeeze risk |
-| Moderate positive (>0.015%) | Longs crowded | MEDIUM |
-| Neutral or negative | Room to run | LOW |
+| Premium | Meaning | Bounce Risk |
+|---------|---------|-------------|
+| > +0.15% | Perp way above spot - longs crowded | **HIGH** |
+| > +0.08% | Perp above spot - some crowding | **MEDIUM** |
+| < +0.08% | Neutral or negative | **LOW** |
 
 **When buying DOWN:**
-| Funding Rate | Meaning | Bounce Risk |
-|--------------|---------|-------------|
-| Very negative (<-0.03%) | Shorts extremely crowded | HIGH - squeeze risk |
-| Moderate negative (<-0.015%) | Shorts crowded | MEDIUM |
-| Neutral or positive | Room to run | LOW |
+| Premium | Meaning | Bounce Risk |
+|---------|---------|-------------|
+| < -0.15% | Perp way below spot - shorts crowded | **HIGH** |
+| < -0.08% | Perp below spot - some crowding | **MEDIUM** |
+| > -0.08% | Neutral or positive | **LOW** |
 
 ### Examples
 
 ```
 Scenario: ETH down $12, considering buying DOWN
 
-Funding: -0.05% (very negative)
-→ Shorts are extremely crowded
+Premium: -0.18% (very negative)
+→ Futures trading below spot
+→ Shorts are crowded
 → If price ticks up, shorts panic cover
 → Bounce likely
 → SKIP or SMALL BET
@@ -134,10 +144,10 @@ Funding: -0.05% (very negative)
 ```
 Scenario: ETH down $12, considering buying DOWN
 
-Funding: +0.01% (positive)
+Premium: +0.05% (positive)
+→ Futures trading above spot
 → Longs still bagholding
-→ More forced selling possible
-→ Momentum likely continues
+→ More room for downside
 → BUY with confidence
 ```
 
@@ -152,11 +162,10 @@ ETH_HOURLY: {
   // Thresholds
   MOVE_THRESHOLD_USD: 12,        // Minimum move to trigger alert
   BTC_CONFIRM_THRESHOLD: 150,    // BTC must move $150+ to confirm
-  LIQUIDATION_THRESHOLD: 50000000, // $50M liquidation threshold (secondary)
 
-  // Funding Rate
-  FUNDING_RATE_HIGH_THRESHOLD: 0.03,    // >0.03% = HIGH bounce risk
-  FUNDING_RATE_MEDIUM_THRESHOLD: 0.015, // >0.015% = MEDIUM bounce risk
+  // Premium Index (real-time bounce risk)
+  PREMIUM_HIGH_THRESHOLD: 0.15,  // >0.15% = HIGH bounce risk
+  PREMIUM_MEDIUM_THRESHOLD: 0.08, // >0.08% = MEDIUM bounce risk
 
   // Timing
   ENTRY_WINDOW_START: 40,        // Start alerting at minute 40
@@ -177,13 +186,12 @@ ETH_HOURLY: {
 
 ## Data Sources
 
-| Data | Source | Purpose |
-|------|--------|---------|
-| ETH/BTC Price | Binance WebSocket | Real-time price tracking |
-| Hourly Open | Binance REST API | Calculate move from open |
-| Funding Rate | Binance Futures API | Bounce risk assessment (FREE) |
-| Market Odds | Polymarket Gamma API | Check if move is priced in |
-| Liquidations | Open Interest proxy | Secondary momentum indicator |
+| Data | Source | Update Freq | Purpose |
+|------|--------|-------------|---------|
+| ETH/BTC Price | Binance WebSocket | Real-time | Price tracking |
+| Hourly Open | Binance REST API | Every 60s | Calculate move |
+| Premium Index | Binance Futures API | Real-time (5s cache) | Bounce risk |
+| Market Odds | Polymarket Gamma API | On-demand | Check if priced in |
 
 ---
 
@@ -210,7 +218,7 @@ Good Setup:
 - Minute 42-48 (sweet spot)
 - BTC also up $200+
 - Polymarket UP odds at 58-68%
-- Funding rate neutral or negative (not crowded)
+- Premium neutral or slightly negative
 - Bounce Risk: LOW
 
 = HIGH confidence BUY
@@ -223,7 +231,7 @@ Bad Setup:
 - ETH up $14 but BTC flat/down
 - Polymarket odds already at 78%
 - It's 4 AM ET
-- Funding rate +0.04% (longs very crowded)
+- Premium +0.20% (longs very crowded)
 - Bounce Risk: HIGH
 
 = SKIP (momentum not confirmed, crowded trade)
@@ -236,7 +244,7 @@ Mixed Setup:
 - ETH up $13
 - BTC confirms (+$180)
 - But odds at 71% (getting pricey)
-- Funding rate +0.02% (somewhat crowded)
+- Premium +0.10% (somewhat crowded)
 - Bounce Risk: MEDIUM
 
 = SMALL BET (some confirmation but bounce possible)
@@ -250,7 +258,7 @@ Mixed Setup:
 Simple notifications when ETH moves $10+ from hourly open. No recommendation - just awareness.
 
 ### 2. Strategy Alerts (Minutes 40-52 Only)
-Full checklist with BUY/SKIP/SMALL BET recommendation. Includes funding rate analysis and bounce risk assessment.
+Full checklist with BUY/SKIP/SMALL BET recommendation. Includes real-time premium analysis and bounce risk assessment.
 
 ---
 
@@ -274,7 +282,7 @@ Full checklist with BUY/SKIP/SMALL BET recommendation. Includes funding rate ana
 - Market may not exist yet for current hour
 - API rate limiting - wait and retry
 
-**Funding rate showing 0:**
+**Premium showing 0:**
 - Binance Futures API may be temporarily unavailable
 - Check internet connection
 
@@ -290,10 +298,10 @@ window-licker-bot/
 │   ├── strategies/
 │   │   └── eth-hourly.js # Main strategy logic
 │   └── services/
-│       ├── binance.js    # Price feed + funding rate
+│       ├── binance.js    # Price feed + premium index
 │       ├── discord.js    # Notifications
 │       ├── polymarket.js # Odds fetching
-│       └── coinglass.js  # Liquidation proxy
+│       └── coinglass.js  # Liquidation proxy (secondary)
 └── .env                  # Your config (not committed)
 ```
 

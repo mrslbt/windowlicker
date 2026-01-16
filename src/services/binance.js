@@ -10,10 +10,10 @@ class BinanceService {
         this.reconnectTimer = null;
         this.callbacks = []; // List of functions to call on price update
 
-        // Funding rate cache
-        this.fundingRates = { ETH: null, BTC: null };
-        this.fundingRateTimestamp = 0;
-        this.fundingRateCacheMs = 60000; // Cache for 60s (funding only changes every 8h)
+        // Premium index cache (real-time, not stale like funding rate)
+        this.premiumData = { ETH: null, BTC: null };
+        this.premiumTimestamp = 0;
+        this.premiumCacheMs = 5000; // Cache for 5s only - we want fresh data
     }
 
     connect() {
@@ -80,18 +80,18 @@ class BinanceService {
     }
 
     /**
-     * Get funding rate for a symbol (from Binance Futures)
-     * Positive = longs pay shorts (longs crowded)
-     * Negative = shorts pay longs (shorts crowded)
+     * Get premium index for a symbol (REAL-TIME from Binance Futures)
+     * Premium = (markPrice - indexPrice) / indexPrice
+     * Positive premium = perp > spot = longs crowded NOW
+     * Negative premium = perp < spot = shorts crowded NOW
      * @param {string} symbol - 'ETH' or 'BTC'
-     * @returns {Promise<{rate: number, nextFundingTime: number}>}
      */
-    async getFundingRate(symbol = 'ETH') {
+    async getPremiumIndex(symbol = 'ETH') {
         const now = Date.now();
 
-        // Return cached if fresh
-        if (this.fundingRates[symbol] !== null && (now - this.fundingRateTimestamp) < this.fundingRateCacheMs) {
-            return this.fundingRates[symbol];
+        // Return cached if fresh (5 second cache)
+        if (this.premiumData[symbol] !== null && (now - this.premiumTimestamp) < this.premiumCacheMs) {
+            return this.premiumData[symbol];
         }
 
         try {
@@ -101,82 +101,89 @@ class BinanceService {
             });
 
             const data = response.data;
+            const markPrice = parseFloat(data.markPrice);
+            const indexPrice = parseFloat(data.indexPrice);
+
+            // Calculate premium (real-time crowding indicator)
+            const premium = ((markPrice - indexPrice) / indexPrice) * 100; // As percentage
+
             const result = {
-                rate: parseFloat(data.lastFundingRate),       // e.g., 0.0001 = 0.01%
-                ratePercent: parseFloat(data.lastFundingRate) * 100, // e.g., 0.01
-                nextFundingTime: data.nextFundingTime,
-                markPrice: parseFloat(data.markPrice)
+                premium,                    // e.g., 0.05 means perp is 0.05% above spot
+                markPrice,                  // Futures price
+                indexPrice,                 // Spot price
+                lastFundingRate: parseFloat(data.lastFundingRate) * 100 // Keep for reference
             };
 
-            this.fundingRates[symbol] = result;
-            this.fundingRateTimestamp = now;
+            this.premiumData[symbol] = result;
+            this.premiumTimestamp = now;
 
             return result;
         } catch (error) {
-            console.error(`[Binance] Failed to fetch funding rate for ${symbol}:`, error.message);
-            return { rate: 0, ratePercent: 0, nextFundingTime: 0, markPrice: 0 };
+            console.error(`[Binance] Failed to fetch premium index for ${symbol}:`, error.message);
+            return { premium: 0, markPrice: 0, indexPrice: 0, lastFundingRate: 0 };
         }
     }
 
     /**
-     * Analyze funding rate for bounce risk
+     * Analyze premium for bounce risk (REAL-TIME)
      * @param {string} symbol - 'ETH' or 'BTC'
      * @param {string} direction - 'UP' or 'DOWN'
-     * @returns {Promise<{crowded: boolean, bounceRisk: string, rate: number, analysis: string}>}
+     * @returns {Promise<{crowded: boolean, bounceRisk: string, premium: number, analysis: string}>}
      */
-    async analyzeFundingRate(symbol = 'ETH', direction = 'UP') {
-        const funding = await this.getFundingRate(symbol);
-        const rate = funding.ratePercent;
+    async analyzePremium(symbol = 'ETH', direction = 'UP') {
+        const data = await this.getPremiumIndex(symbol);
+        const premium = data.premium;
 
         let crowded = false;
         let bounceRisk = 'LOW';
         let analysis = '';
 
-        // Thresholds (typical funding is -0.01% to +0.01%)
-        // Extreme: > 0.03% or < -0.03%
-        // High: > 0.02% or < -0.02%
+        // Premium thresholds (typical range: -0.1% to +0.1%)
+        // >0.15% or <-0.15% = extreme crowding
+        // >0.08% or <-0.08% = moderate crowding
 
         if (direction === 'UP') {
-            // Buying UP - worried about longs being crowded
-            if (rate > 0.03) {
+            // Buying UP - worried about longs being crowded (positive premium)
+            if (premium > 0.15) {
                 crowded = true;
                 bounceRisk = 'HIGH';
-                analysis = 'Longs extremely crowded - squeeze risk';
-            } else if (rate > 0.015) {
+                analysis = 'Perp trading way above spot - longs crowded';
+            } else if (premium > 0.08) {
                 crowded = true;
                 bounceRisk = 'MEDIUM';
-                analysis = 'Longs crowded - some bounce risk';
-            } else if (rate < -0.01) {
+                analysis = 'Perp above spot - some long crowding';
+            } else if (premium < -0.05) {
                 bounceRisk = 'LOW';
-                analysis = 'Shorts paying longs - room to run up';
+                analysis = 'Perp below spot - room to run up';
             } else {
                 bounceRisk = 'LOW';
-                analysis = 'Neutral funding - no crowding';
+                analysis = 'Neutral premium - no crowding';
             }
         } else {
-            // Buying DOWN - worried about shorts being crowded
-            if (rate < -0.03) {
+            // Buying DOWN - worried about shorts being crowded (negative premium)
+            if (premium < -0.15) {
                 crowded = true;
                 bounceRisk = 'HIGH';
-                analysis = 'Shorts extremely crowded - squeeze risk';
-            } else if (rate < -0.015) {
+                analysis = 'Perp trading way below spot - shorts crowded';
+            } else if (premium < -0.08) {
                 crowded = true;
                 bounceRisk = 'MEDIUM';
-                analysis = 'Shorts crowded - some bounce risk';
-            } else if (rate > 0.01) {
+                analysis = 'Perp below spot - some short crowding';
+            } else if (premium > 0.05) {
                 bounceRisk = 'LOW';
-                analysis = 'Longs paying shorts - room to run down';
+                analysis = 'Perp above spot - room to run down';
             } else {
                 bounceRisk = 'LOW';
-                analysis = 'Neutral funding - no crowding';
+                analysis = 'Neutral premium - no crowding';
             }
         }
 
         return {
             crowded,
             bounceRisk,
-            rate,
-            rateRaw: funding.rate,
+            premium,
+            markPrice: data.markPrice,
+            indexPrice: data.indexPrice,
             analysis
         };
     }
