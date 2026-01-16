@@ -12,11 +12,26 @@ npm install
 
 # 2. Configure environment
 cp .env.example .env
-# Edit .env with your Discord webhook URLs
+# Edit .env with your Discord webhook URLs and bot token
 
 # 3. Run the bot
 npm start
 ```
+
+---
+
+## Features
+
+### Core Features
+- **6-Point Checklist** - Systematic evaluation of trade setups
+- **Premium Index Analysis** - Real-time bounce risk detection
+- **Automatic 40-Minute Alerts** - Signals during optimal entry window
+
+### New Features (v2.1)
+- **`/stat` Command** - Get instant market readings anytime via Discord
+- **Odds Velocity Tracking** - Detect when moves are being priced in too fast
+- **Exit Alerts** - Get notified when conditions change mid-trade
+- **Performance Logging** - Track all signals for historical analysis
 
 ---
 
@@ -31,12 +46,50 @@ The bot targets **Polymarket ETH hourly markets** (ETH up or down by end of hour
 - Requires ETH to move **$12+** from the hourly open price
 - Runs a 6-point checklist to determine BUY / SKIP / SMALL BET
 - Uses **premium index** (real-time) to assess bounce risk before entry
+- Tracks **odds velocity** to detect if the move is already priced in
 
 ### Why Last 20 Minutes?
 
 - Early in the hour = too much time for reversals
 - Last 20 minutes = momentum is established, less time for reversal
 - Before minute 52 = still get decent odds (not priced in yet)
+
+---
+
+## Discord Commands
+
+### `/stat` - Get Current Status
+
+Type `/stat` in Discord anytime to get:
+- Current ETH price & move from hour open
+- Current BTC price & move
+- Polymarket odds (UP/DOWN)
+- Odds velocity (how fast odds are changing)
+- Premium index & bounce risk
+- Time until entry window
+- Current recommendation (if in window)
+- Active position info (if any)
+
+**Example Response:**
+```
+📊 ETH Hourly Status
+
+💰 ETH Price: $2,450.50
+📈 ETH Move: +$18.42
+₿ BTC Move: +$245.00
+
+⏱️ Current Minute: 35
+🎯 Entry Window: ⏳ In 5 min
+⏰ Hour Ends: 25 min
+
+📊 UP Odds: 62.0%
+📊 DOWN Odds: 38.0%
+
+⚡ Odds Velocity: ➡️ STABLE (0.5%/min)
+
+💹 Premium Index: +0.032%
+🎢 Bounce Risk: ✅ LOW
+```
 
 ---
 
@@ -54,6 +107,9 @@ Checklist:
  Odds < 75%       ✅  (62%)
  Good Hour        ✅  (2 PM ET)
  Low Bounce Risk  ✅  (+0.032%)
+
+Odds Velocity:
+ ➡️ STABLE (0.5%/min)
 
 Premium Analysis (Real-time):
  Neutral premium - no crowding
@@ -77,9 +133,8 @@ Recommendation: BUY
 
 | Signal | Checks Passed | What To Do |
 |--------|---------------|------------|
-| **BUY (HIGH)** | 5-6 of 6 | Strong signal - full position |
-| **BUY (MEDIUM)** | 4 of 6 | Decent signal - standard position |
-| **SMALL BET** | 3 of 6 | Weak signal - reduced size only |
+| **BUY** | 4-6 of 6 | Strong signal - enter position |
+| **SMALL BET** | 3 of 6, or rapid odds | Weak signal - reduced size only |
 | **SKIP** | <3 or critical fail | Do not enter |
 | **WAIT** | Move too small or outside window | Not enough data yet |
 
@@ -89,6 +144,52 @@ These conditions override the checklist and force SKIP:
 - **Odds > 75%** - Too late, move already priced in
 - **Skip Hours (3-5 AM ET)** - Low liquidity, unreliable
 - **HIGH Bounce Risk** - Premium shows crowded trade
+- **RAPID_RISE Odds Velocity** - Move being priced in too fast
+
+---
+
+## Odds Velocity
+
+Odds velocity measures how fast Polymarket odds are changing. This helps detect when a move is being "priced in" before you can enter.
+
+### Velocity Status Levels
+
+| Status | Meaning | Impact on Recommendation |
+|--------|---------|--------------------------|
+| **RAPID_RISE** 🚀 | Odds rising >2%/min | Downgrade to SMALL BET or SKIP |
+| **RISING** 📈 | Odds rising 1-2%/min | Caution - monitor closely |
+| **STABLE** ➡️ | Odds moving <1%/min | Normal - proceed with checklist |
+| **FALLING** 📉 | Odds falling >1%/min | Favorable - odds improving |
+
+### Why It Matters
+
+If odds are rising rapidly:
+- The market is pricing in the move before you
+- By the time you enter, you may be paying too much
+- Even if other checks pass, the opportunity may be gone
+
+---
+
+## Exit Alerts
+
+The bot monitors your position after entry and sends alerts when conditions change.
+
+### Alert Types
+
+| Alert | Trigger | What It Means |
+|-------|---------|---------------|
+| **⚠️ PRICE REVERSAL** | ETH reverses $15+ | Price moving against your position |
+| **⚠️ BTC REVERSAL** | BTC reverses $200+ | Bitcoin no longer confirms direction |
+| **🔴 BOUNCE RISK INCREASED** | Premium flips LOW→HIGH | Trade becoming crowded mid-position |
+| **💰 TAKE PROFIT** | Odds drop below 50% | Good profit opportunity |
+| **🛑 STOP LOSS** | Odds spike above 85% | Position at significant risk |
+
+### How It Works
+
+1. When a BUY or SMALL BET alert is sent, the bot registers your entry
+2. It continuously monitors price, BTC, and premium
+3. When exit conditions trigger, you get an alert
+4. Position is automatically cleared at the end of the hour
 
 ---
 
@@ -128,27 +229,57 @@ When one side is crowded:
 | < -0.08% | Perp below spot - some crowding | **MEDIUM** |
 | > -0.08% | Neutral or positive | **LOW** |
 
-### Examples
+---
 
+## Performance Logging
+
+Every signal is logged to `logs/signals.jsonl` for historical analysis.
+
+### Log Format
+
+Each line is a JSON object:
+```json
+{
+  "timestamp": "2024-01-15T14:40:00.000Z",
+  "hour": "2024-01-15T14:00:00.000Z",
+  "ethPrice": 2450.50,
+  "ethMove": 18.42,
+  "btcPrice": 43500,
+  "btcMove": 180,
+  "upOdds": 0.62,
+  "downOdds": 0.38,
+  "currentOdds": 0.62,
+  "oddsVelocity": 0.8,
+  "oddsVelocityStatus": "STABLE",
+  "premium": 0.032,
+  "bounceRisk": "LOW",
+  "liquidations": 12000000,
+  "recommendation": "BUY",
+  "checksCount": 5,
+  "direction": "UP",
+  "minute": 42
+}
 ```
-Scenario: ETH down $12, considering buying DOWN
 
-Premium: -0.18% (very negative)
-→ Futures trading below spot
-→ Shorts are crowded
-→ If price ticks up, shorts panic cover
-→ Bounce likely
-→ SKIP or SMALL BET
-```
+### Analyzing Logs
 
-```
-Scenario: ETH down $12, considering buying DOWN
+You can analyze with Python:
+```python
+import pandas as pd
+import json
 
-Premium: +0.05% (positive)
-→ Futures trading above spot
-→ Longs still bagholding
-→ More room for downside
-→ BUY with confidence
+# Read JSONL file
+signals = []
+with open('logs/signals.jsonl', 'r') as f:
+    for line in f:
+        signals.append(json.loads(line))
+
+df = pd.DataFrame(signals)
+
+# Stats
+print(f"Total signals: {len(df)}")
+print(f"BUY signals: {len(df[df.recommendation == 'BUY'])}")
+print(f"SKIP signals: {len(df[df.recommendation == 'SKIP'])}")
 ```
 
 ---
@@ -167,6 +298,16 @@ ETH_HOURLY: {
   PREMIUM_HIGH_THRESHOLD: 0.15,  // >0.15% = HIGH bounce risk
   PREMIUM_MEDIUM_THRESHOLD: 0.08, // >0.08% = MEDIUM bounce risk
 
+  // Odds Velocity
+  ODDS_VELOCITY_RAPID: 0.02,     // >2%/min = RAPID_RISE
+  ODDS_VELOCITY_RISING: 0.01,    // >1%/min = RISING
+
+  // Exit Thresholds
+  EXIT_BTC_REVERSAL_USD: 200,    // Alert if BTC reverses $200+
+  EXIT_PRICE_REVERSAL_USD: 15,   // Alert if ETH reverses $15
+  EXIT_TAKE_PROFIT_ODDS: 0.50,   // Alert if odds < 50%
+  EXIT_STOP_LOSS_ODDS: 0.85,     // Alert if odds > 85%
+
   // Timing
   ENTRY_WINDOW_START: 40,        // Start alerting at minute 40
   ENTRY_WINDOW_END: 52,          // Stop at minute 52
@@ -175,12 +316,31 @@ ETH_HOURLY: {
   // Odds
   MAX_ODDS_FOR_BUY: 0.75,        // Skip if odds > 75%
   GOOD_ODDS: 0.65,               // Great entry if < 65%
-
-  // Alert Frequency
-  PRICE_ALERT_THRESHOLD_USD: 10, // Price alert on $10+ move (any time)
-  REALERT_INCREMENT_USD: 6,      // Re-alert every $6 additional
 }
 ```
+
+---
+
+## Environment Variables
+
+```bash
+# Discord Webhooks (for automatic alerts)
+DISCORD_WEBHOOK_ETH_HOURLY=https://discord.com/api/webhooks/...
+
+# Discord Bot (for /stat command)
+DISCORD_BOT_TOKEN=your_bot_token_here
+DISCORD_GUILD_ID=your_server_id_here
+
+# Optional
+ACTIVE_STRATEGIES=ETH_HOURLY   # or ALL
+PORT=8080                       # Health check port
+```
+
+### Getting Discord Credentials
+
+1. **Webhook URL**: Server Settings → Integrations → Webhooks → New Webhook
+2. **Bot Token**: Discord Developer Portal → Create Application → Bot → Token
+3. **Guild ID**: Enable Developer Mode → Right-click server → Copy Server ID
 
 ---
 
@@ -195,79 +355,26 @@ ETH_HOURLY: {
 
 ---
 
-## Environment Variables
-
-```bash
-# Discord Webhooks
-DISCORD_WEBHOOK_ETH_HOURLY=https://discord.com/api/webhooks/...
-
-# Optional
-ACTIVE_STRATEGIES=ETH_HOURLY   # or ALL
-PORT=8080                       # Health check port
-```
-
----
-
-## Interpreting Signals - Decision Framework
-
-### When to BUY
+## File Structure
 
 ```
-Good Setup:
-- ETH up $15+ from open
-- Minute 42-48 (sweet spot)
-- BTC also up $200+
-- Polymarket UP odds at 58-68%
-- Premium neutral or slightly negative
-- Bounce Risk: LOW
-
-= HIGH confidence BUY
+window-licker-bot/
+├── index.js                  # Entry point
+├── logs/
+│   └── signals.jsonl         # Performance log (auto-created)
+├── src/
+│   ├── config.js             # All parameters
+│   ├── strategies/
+│   │   └── eth-hourly.js     # Main strategy logic
+│   └── services/
+│       ├── binance.js        # Price feed + premium index
+│       ├── discord.js        # Webhooks + /stat bot
+│       ├── polymarket.js     # Odds fetching + velocity
+│       ├── coinglass.js      # Liquidation proxy (secondary)
+│       ├── logger.js         # Performance logging
+│       └── position-monitor.js # Exit alerts
+└── .env                      # Your config (not committed)
 ```
-
-### When to SKIP
-
-```
-Bad Setup:
-- ETH up $14 but BTC flat/down
-- Polymarket odds already at 78%
-- It's 4 AM ET
-- Premium +0.20% (longs very crowded)
-- Bounce Risk: HIGH
-
-= SKIP (momentum not confirmed, crowded trade)
-```
-
-### When to SMALL BET
-
-```
-Mixed Setup:
-- ETH up $13
-- BTC confirms (+$180)
-- But odds at 71% (getting pricey)
-- Premium +0.10% (somewhat crowded)
-- Bounce Risk: MEDIUM
-
-= SMALL BET (some confirmation but bounce possible)
-```
-
----
-
-## Alert Types
-
-### 1. Price Alerts (Any Time)
-Simple notifications when ETH moves $10+ from hourly open. No recommendation - just awareness.
-
-### 2. Strategy Alerts (Minutes 40-52 Only)
-Full checklist with BUY/SKIP/SMALL BET recommendation. Includes real-time premium analysis and bounce risk assessment.
-
----
-
-## Potential Improvements (Future)
-
-1. **Odds Velocity** - Track if odds are rising or falling, not just the level
-2. **Weighted Scoring** - Some checks are more predictive than others
-3. **Position Sizing** - Calculate bet size based on confidence level
-4. **Historical Win Rate** - Track which setups actually win
 
 ---
 
@@ -278,6 +385,11 @@ Full checklist with BUY/SKIP/SMALL BET recommendation. Includes real-time premiu
 - Verify bot is running (`npm start`)
 - Wait for minute 40+ with $12+ move
 
+**`/stat` command not working:**
+- Check `DISCORD_BOT_TOKEN` in .env
+- Check `DISCORD_GUILD_ID` in .env
+- Ensure bot is invited to your server with slash command permissions
+
 **Polymarket odds showing N/A:**
 - Market may not exist yet for current hour
 - API rate limiting - wait and retry
@@ -286,24 +398,9 @@ Full checklist with BUY/SKIP/SMALL BET recommendation. Includes real-time premiu
 - Binance Futures API may be temporarily unavailable
 - Check internet connection
 
----
-
-## File Structure
-
-```
-window-licker-bot/
-├── index.js              # Entry point
-├── src/
-│   ├── config.js         # All parameters
-│   ├── strategies/
-│   │   └── eth-hourly.js # Main strategy logic
-│   └── services/
-│       ├── binance.js    # Price feed + premium index
-│       ├── discord.js    # Notifications
-│       ├── polymarket.js # Odds fetching
-│       └── coinglass.js  # Liquidation proxy (secondary)
-└── .env                  # Your config (not committed)
-```
+**Logs not being created:**
+- Check `logs/` directory exists
+- Check write permissions
 
 ---
 

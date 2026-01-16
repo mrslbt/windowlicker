@@ -1,6 +1,7 @@
 const http = require('http');
 const CONFIG = require('./src/config');
 const binanceService = require('./src/services/binance');
+const discordService = require('./src/services/discord');
 
 const ethHourlyStrategy = require('./src/strategies/eth-hourly');
 
@@ -10,6 +11,9 @@ async function main() {
 
   // Connect Shared Services
   binanceService.connect();
+
+  // Initialize Discord Bot (for /stat command)
+  await discordService.initBot();
 
   // Start Strategy
   ethHourlyStrategy.start();
