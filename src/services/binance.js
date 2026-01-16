@@ -1,4 +1,5 @@
 const WebSocket = require('ws');
+const axios = require('axios');
 
 class BinanceService {
     constructor() {
@@ -8,6 +9,11 @@ class BinanceService {
         this.isConnected = false;
         this.reconnectTimer = null;
         this.callbacks = []; // List of functions to call on price update
+
+        // Funding rate cache
+        this.fundingRates = { ETH: null, BTC: null };
+        this.fundingRateTimestamp = 0;
+        this.fundingRateCacheMs = 60000; // Cache for 60s (funding only changes every 8h)
     }
 
     connect() {
@@ -71,6 +77,108 @@ class BinanceService {
 
     getPrices() {
         return { btc: this.btcPrice, eth: this.ethPrice };
+    }
+
+    /**
+     * Get funding rate for a symbol (from Binance Futures)
+     * Positive = longs pay shorts (longs crowded)
+     * Negative = shorts pay longs (shorts crowded)
+     * @param {string} symbol - 'ETH' or 'BTC'
+     * @returns {Promise<{rate: number, nextFundingTime: number}>}
+     */
+    async getFundingRate(symbol = 'ETH') {
+        const now = Date.now();
+
+        // Return cached if fresh
+        if (this.fundingRates[symbol] !== null && (now - this.fundingRateTimestamp) < this.fundingRateCacheMs) {
+            return this.fundingRates[symbol];
+        }
+
+        try {
+            const response = await axios.get('https://fapi.binance.com/fapi/v1/premiumIndex', {
+                params: { symbol: `${symbol}USDT` },
+                timeout: 5000
+            });
+
+            const data = response.data;
+            const result = {
+                rate: parseFloat(data.lastFundingRate),       // e.g., 0.0001 = 0.01%
+                ratePercent: parseFloat(data.lastFundingRate) * 100, // e.g., 0.01
+                nextFundingTime: data.nextFundingTime,
+                markPrice: parseFloat(data.markPrice)
+            };
+
+            this.fundingRates[symbol] = result;
+            this.fundingRateTimestamp = now;
+
+            return result;
+        } catch (error) {
+            console.error(`[Binance] Failed to fetch funding rate for ${symbol}:`, error.message);
+            return { rate: 0, ratePercent: 0, nextFundingTime: 0, markPrice: 0 };
+        }
+    }
+
+    /**
+     * Analyze funding rate for bounce risk
+     * @param {string} symbol - 'ETH' or 'BTC'
+     * @param {string} direction - 'UP' or 'DOWN'
+     * @returns {Promise<{crowded: boolean, bounceRisk: string, rate: number, analysis: string}>}
+     */
+    async analyzeFundingRate(symbol = 'ETH', direction = 'UP') {
+        const funding = await this.getFundingRate(symbol);
+        const rate = funding.ratePercent;
+
+        let crowded = false;
+        let bounceRisk = 'LOW';
+        let analysis = '';
+
+        // Thresholds (typical funding is -0.01% to +0.01%)
+        // Extreme: > 0.03% or < -0.03%
+        // High: > 0.02% or < -0.02%
+
+        if (direction === 'UP') {
+            // Buying UP - worried about longs being crowded
+            if (rate > 0.03) {
+                crowded = true;
+                bounceRisk = 'HIGH';
+                analysis = 'Longs extremely crowded - squeeze risk';
+            } else if (rate > 0.015) {
+                crowded = true;
+                bounceRisk = 'MEDIUM';
+                analysis = 'Longs crowded - some bounce risk';
+            } else if (rate < -0.01) {
+                bounceRisk = 'LOW';
+                analysis = 'Shorts paying longs - room to run up';
+            } else {
+                bounceRisk = 'LOW';
+                analysis = 'Neutral funding - no crowding';
+            }
+        } else {
+            // Buying DOWN - worried about shorts being crowded
+            if (rate < -0.03) {
+                crowded = true;
+                bounceRisk = 'HIGH';
+                analysis = 'Shorts extremely crowded - squeeze risk';
+            } else if (rate < -0.015) {
+                crowded = true;
+                bounceRisk = 'MEDIUM';
+                analysis = 'Shorts crowded - some bounce risk';
+            } else if (rate > 0.01) {
+                bounceRisk = 'LOW';
+                analysis = 'Longs paying shorts - room to run down';
+            } else {
+                bounceRisk = 'LOW';
+                analysis = 'Neutral funding - no crowding';
+            }
+        }
+
+        return {
+            crowded,
+            bounceRisk,
+            rate,
+            rateRaw: funding.rate,
+            analysis
+        };
     }
 }
 

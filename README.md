@@ -30,6 +30,7 @@ The bot targets **Polymarket ETH hourly markets** (ETH up or down by end of hour
 - Only alerts during minutes **40-52** of each hour (last 20 minutes)
 - Requires ETH to move **$12+** from the hourly open price
 - Runs a 6-point checklist to determine BUY / SKIP / SMALL BET
+- Uses **funding rate** to assess bounce risk before entry
 
 ### Why Last 20 Minutes?
 
@@ -47,12 +48,16 @@ The bot targets **Polymarket ETH hourly markets** (ETH up or down by end of hour
 ETH HOURLY | UP +$18.42 | BUY (HIGH)
 
 Checklist:
- Move $12+     ✅  ($18.42)
- Entry Window   ✅  (Minute 45)
- Not Skip Hour  ✅  (2 PM ET)
- BTC Confirms   ✅  (+$245)
- Odds < 75%     ✅  (62%)
- Liquidations   ❌  ($12M)
+ Move $12+        ✅  (+$18.42)
+ Entry Window     ✅  (Minute 45)
+ BTC Confirms     ✅  (+$245)
+ Odds < 75%       ✅  (62%)
+ Good Hour        ✅  (2 PM ET)
+ Low Bounce Risk  ✅  (+0.0082%)
+
+Funding Analysis:
+ Neutral funding - no crowding
+ Bounce Risk: LOW
 
 Recommendation: BUY
 ```
@@ -63,10 +68,10 @@ Recommendation: BUY
 |-------|---------------|----------------|
 | **Move $12+** | ETH moved enough to signal conviction | \|move\| >= $12 |
 | **Entry Window** | We're in the optimal timing window | Minutes 40-52 |
-| **Not Skip Hour** | Avoid low-liquidity hours | NOT 3-5 AM ET |
 | **BTC Confirms** | Bitcoin moving same direction | BTC move matches ETH direction, $150+ |
 | **Odds < 75%** | Market hasn't fully priced in the move | Polymarket odds < 75% |
-| **Liquidations** | Liquidation cascade supports direction | $50M+ liquidations in last hour |
+| **Good Hour** | Avoid low-liquidity hours | NOT 3-5 AM ET |
+| **Low Bounce Risk** | Funding rate shows trade isn't crowded | See funding rate section below |
 
 ### Recommendation Meanings
 
@@ -83,6 +88,58 @@ Recommendation: BUY
 These conditions override the checklist and force SKIP:
 - **Odds > 75%** - Too late, move already priced in
 - **Skip Hours (3-5 AM ET)** - Low liquidity, unreliable
+- **HIGH Bounce Risk** - Funding rate shows crowded trade
+
+---
+
+## Funding Rate - Bounce Risk Indicator
+
+The funding rate tells you **how crowded the current trade is**. This is the key indicator for predicting if a move will continue or bounce back.
+
+### How It Works
+
+```
+Positive funding → Longs pay shorts → Too many longs (bullish crowded)
+Negative funding → Shorts pay longs → Too many shorts (bearish crowded)
+```
+
+### Reading the Signal
+
+**When buying UP:**
+| Funding Rate | Meaning | Bounce Risk |
+|--------------|---------|-------------|
+| Very positive (>0.03%) | Longs extremely crowded | HIGH - squeeze risk |
+| Moderate positive (>0.015%) | Longs crowded | MEDIUM |
+| Neutral or negative | Room to run | LOW |
+
+**When buying DOWN:**
+| Funding Rate | Meaning | Bounce Risk |
+|--------------|---------|-------------|
+| Very negative (<-0.03%) | Shorts extremely crowded | HIGH - squeeze risk |
+| Moderate negative (<-0.015%) | Shorts crowded | MEDIUM |
+| Neutral or positive | Room to run | LOW |
+
+### Examples
+
+```
+Scenario: ETH down $12, considering buying DOWN
+
+Funding: -0.05% (very negative)
+→ Shorts are extremely crowded
+→ If price ticks up, shorts panic cover
+→ Bounce likely
+→ SKIP or SMALL BET
+```
+
+```
+Scenario: ETH down $12, considering buying DOWN
+
+Funding: +0.01% (positive)
+→ Longs still bagholding
+→ More forced selling possible
+→ Momentum likely continues
+→ BUY with confidence
+```
 
 ---
 
@@ -95,7 +152,11 @@ ETH_HOURLY: {
   // Thresholds
   MOVE_THRESHOLD_USD: 12,        // Minimum move to trigger alert
   BTC_CONFIRM_THRESHOLD: 150,    // BTC must move $150+ to confirm
-  LIQUIDATION_THRESHOLD: 50000000, // $50M liquidation threshold
+  LIQUIDATION_THRESHOLD: 50000000, // $50M liquidation threshold (secondary)
+
+  // Funding Rate
+  FUNDING_RATE_HIGH_THRESHOLD: 0.03,    // >0.03% = HIGH bounce risk
+  FUNDING_RATE_MEDIUM_THRESHOLD: 0.015, // >0.015% = MEDIUM bounce risk
 
   // Timing
   ENTRY_WINDOW_START: 40,        // Start alerting at minute 40
@@ -120,8 +181,9 @@ ETH_HOURLY: {
 |------|--------|---------|
 | ETH/BTC Price | Binance WebSocket | Real-time price tracking |
 | Hourly Open | Binance REST API | Calculate move from open |
+| Funding Rate | Binance Futures API | Bounce risk assessment (FREE) |
 | Market Odds | Polymarket Gamma API | Check if move is priced in |
-| Liquidations | Coinglass API | Confirm momentum (requires API key) |
+| Liquidations | Open Interest proxy | Secondary momentum indicator |
 
 ---
 
@@ -148,7 +210,8 @@ Good Setup:
 - Minute 42-48 (sweet spot)
 - BTC also up $200+
 - Polymarket UP odds at 58-68%
-- Recent liquidation spike
+- Funding rate neutral or negative (not crowded)
+- Bounce Risk: LOW
 
 = HIGH confidence BUY
 ```
@@ -160,9 +223,10 @@ Bad Setup:
 - ETH up $14 but BTC flat/down
 - Polymarket odds already at 78%
 - It's 4 AM ET
-- No liquidation activity
+- Funding rate +0.04% (longs very crowded)
+- Bounce Risk: HIGH
 
-= SKIP (momentum not confirmed, too late, bad hour)
+= SKIP (momentum not confirmed, crowded trade)
 ```
 
 ### When to SMALL BET
@@ -172,9 +236,10 @@ Mixed Setup:
 - ETH up $13
 - BTC confirms (+$180)
 - But odds at 71% (getting pricey)
-- Liquidations weak
+- Funding rate +0.02% (somewhat crowded)
+- Bounce Risk: MEDIUM
 
-= SMALL BET (some confirmation but not ideal)
+= SMALL BET (some confirmation but bounce possible)
 ```
 
 ---
@@ -185,7 +250,7 @@ Mixed Setup:
 Simple notifications when ETH moves $10+ from hourly open. No recommendation - just awareness.
 
 ### 2. Strategy Alerts (Minutes 40-52 Only)
-Full checklist with BUY/SKIP/SMALL BET recommendation. This is the actionable signal.
+Full checklist with BUY/SKIP/SMALL BET recommendation. Includes funding rate analysis and bounce risk assessment.
 
 ---
 
@@ -194,8 +259,7 @@ Full checklist with BUY/SKIP/SMALL BET recommendation. This is the actionable si
 1. **Odds Velocity** - Track if odds are rising or falling, not just the level
 2. **Weighted Scoring** - Some checks are more predictive than others
 3. **Position Sizing** - Calculate bet size based on confidence level
-4. **Funding Rates** - Add perpetual funding rate as confirmation signal
-5. **Historical Win Rate** - Track which setups actually win
+4. **Historical Win Rate** - Track which setups actually win
 
 ---
 
@@ -210,8 +274,9 @@ Full checklist with BUY/SKIP/SMALL BET recommendation. This is the actionable si
 - Market may not exist yet for current hour
 - API rate limiting - wait and retry
 
-**Liquidation data showing $0:**
-- Coinglass API key not configured (optional feature)
+**Funding rate showing 0:**
+- Binance Futures API may be temporarily unavailable
+- Check internet connection
 
 ---
 
@@ -225,10 +290,10 @@ window-licker-bot/
 │   ├── strategies/
 │   │   └── eth-hourly.js # Main strategy logic
 │   └── services/
-│       ├── binance.js    # Price feed
+│       ├── binance.js    # Price feed + funding rate
 │       ├── discord.js    # Notifications
 │       ├── polymarket.js # Odds fetching
-│       └── coinglass.js  # Liquidation data
+│       └── coinglass.js  # Liquidation proxy
 └── .env                  # Your config (not committed)
 ```
 

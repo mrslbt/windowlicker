@@ -122,6 +122,10 @@ class EthHourlyStrategy {
         const btcPrice = binanceService.getPrices().btc;
         const liquidations = await coinglassService.getLiquidations('ETH');
 
+        // Fetch Funding Rate
+        const direction = ethMove >= 0 ? 'UP' : 'DOWN';
+        const fundingAnalysis = await binanceService.analyzeFundingRate('ETH', direction);
+
         // --- Checklist Logic ---
         // Send alert if price crosses threshold OR we haven't sent one yet in this window and move is significant
         // User asked: "if price crosses 10USD... in last 20 minutes"
@@ -149,8 +153,16 @@ class EthHourlyStrategy {
         let oddsVal = 'N/A';
         let oddsEmoji = '❓';
 
+        // Liquidations (kept as secondary indicator)
         const liquidationsVal = liquidations.totalVolUsd || 0;
         const liqEmoji = liquidationsVal > CONFIG.ETH_HOURLY.LIQUIDATION_THRESHOLD ? '💥' : '⬜';
+
+        // Funding Rate Check (PRIMARY bounce risk indicator)
+        const fundingEmoji = fundingAnalysis.bounceRisk === 'LOW' ? '✅' :
+                            fundingAnalysis.bounceRisk === 'MEDIUM' ? '⚠️' : '❌';
+        const fundingRateDisplay = fundingAnalysis.rate >= 0 ?
+                                   `+${fundingAnalysis.rate.toFixed(4)}%` :
+                                   `${fundingAnalysis.rate.toFixed(4)}%`;
 
         // Construct Embed
         const embed = discordService.createEmbed(
@@ -168,7 +180,12 @@ class EthHourlyStrategy {
                         `${btcEmoji} BTC confirms (${btcMove >= 0 ? '+' : ''}${btcMove.toFixed(2)})\n` +
                         `${oddsEmoji} Odds < 75% (${oddsVal})\n` +
                         `${hourEmoji} Good trading hour\n` +
-                        `${liqEmoji} Liquidation cascade ($${(liquidationsVal / 1000000).toFixed(1)}M)`
+                        `${fundingEmoji} Low bounce risk (${fundingRateDisplay})`
+                },
+                {
+                    name: 'Funding Analysis', value:
+                        `${fundingAnalysis.analysis}\n` +
+                        `Bounce Risk: **${fundingAnalysis.bounceRisk}**`
                 }
             ]
         );

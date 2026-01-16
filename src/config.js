@@ -26,6 +26,10 @@ const CONFIG = {
     GOOD_ODDS: 0.65,
     LIQUIDATION_THRESHOLD: 50000000,
     BTC_CONFIRM_THRESHOLD: 150,
+
+    // Funding Rate Thresholds (as percentage, e.g., 0.03 = 0.03%)
+    FUNDING_RATE_HIGH_THRESHOLD: 0.03,    // Extreme crowding - HIGH bounce risk
+    FUNDING_RATE_MEDIUM_THRESHOLD: 0.015, // Moderate crowding - MEDIUM bounce risk
     GAMMA_API: 'https://gamma-api.polymarket.com',
     COINGLASS_API: 'https://open-api.coinglass.com/public/v2',
     PRICE_CHECK_INTERVAL: 2000,
