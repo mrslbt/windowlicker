@@ -6,7 +6,6 @@ const coinglassService = require('../services/coinglass');
 const loggerService = require('../services/logger');
 const positionMonitor = require('../services/position-monitor');
 const emailService = require('../services/email');
-const performanceService = require('../services/performance');
 const axios = require('axios');
 
 class EthHourlyStrategy {
@@ -89,6 +88,21 @@ class EthHourlyStrategy {
                 }
 
                 if (wasNewHour) {
+                    // === End of Hour Summary ===
+                    if (this.state.ethHourOpen) {
+                        const closePrice = parseFloat(openPrice); // New open is roughly old close
+                        const move = closePrice - this.state.ethHourOpen;
+                        const icon = move >= 0 ? '📈' : '📉';
+                        const sign = move >= 0 ? '+' : '';
+
+                        const msg = `🏁 **Hour Closed**\n` +
+                            `**${icon} ${sign}$${move.toFixed(2)}**\n` +
+                            `Open: $${this.state.ethHourOpen.toFixed(2)} | Close: $${closePrice.toFixed(2)}`;
+
+                        // Send silent notification or standard alert
+                        discordService.sendAlert(CONFIG.DISCORD.ETH_HOURLY_WEBHOOK, msg);
+                    }
+
                     this.state.alertSentThisHour = false;
                     this.state.lastRecommendation = null;
 
@@ -220,23 +234,8 @@ class EthHourlyStrategy {
         this.state.lastScore = scoreData.score;
         this.state.lastSignalStrength = scoreData.strength;
 
-        // === PERFORMANCE TRACKING (Minute 40) ===
-        // Record the "Call" at minute 40.
-        // We use a latch or just rely on the service to dedupe within the hour.
-        if (minutes === 40) {
-            performanceService.recordSignal({
-                price: currentPrice,
-                entryPrice: currentPrice,
-                score: scoreData.score,
-                strength: scoreData.strength,
-                recommendation: scoreData.recommendation,
-                direction: direction,
-                ethMove: ethMove,
-                btcMove: btcMove
-            });
-        }
         // Check settlements every loop
-        performanceService.checkSettlements(currentPrice);
+        // performanceService.checkSettlements(currentPrice); // REMOVED
 
         // Check if we should alert
         // Only alert in window (last 20 mins: 40-60)
