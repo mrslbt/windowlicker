@@ -28,7 +28,7 @@ npm start
 - **Automatic 40-Minute Alerts** - Signals during optimal entry window
 
 ### New Features (v2.1)
-- **`/stat` Command** - Get instant market readings anytime via Discord
+- **`/wdyt` Command** - Get instant market readings anytime via Discord
 - **Odds Velocity Tracking** - Detect when moves are being priced in too fast
 - **Exit Alerts** - Get notified when conditions change mid-trade
 - **Performance Logging** - Track all signals for historical analysis
@@ -58,9 +58,9 @@ The bot targets **Polymarket ETH hourly markets** (ETH up or down by end of hour
 
 ## Discord Commands
 
-### `/stat` - Get Current Status
+### `/wdyt` - Get Current Status
 
-Type `/stat` in Discord anytime to get:
+Type `/wdyt` in Discord anytime to get:
 - Current ETH price & move from hour open
 - Current BTC price & move
 - Polymarket odds (UP/DOWN)
@@ -327,7 +327,7 @@ ETH_HOURLY: {
 # Discord Webhooks (for automatic alerts)
 DISCORD_WEBHOOK_ETH_HOURLY=https://discord.com/api/webhooks/...
 
-# Discord Bot (for /stat command)
+# Discord Bot (for /wdyt command)
 DISCORD_BOT_TOKEN=your_bot_token_here
 DISCORD_GUILD_ID=your_server_id_here
 
@@ -368,7 +368,7 @@ window-licker-bot/
 │   │   └── eth-hourly.js     # Main strategy logic
 │   └── services/
 │       ├── binance.js        # Price feed + premium index
-│       ├── discord.js        # Webhooks + /stat bot
+│       ├── discord.js        # Webhooks + /wdyt bot
 │       ├── polymarket.js     # Odds fetching + velocity
 │       ├── coinglass.js      # Liquidation proxy (secondary)
 │       ├── logger.js         # Performance logging
@@ -385,7 +385,7 @@ window-licker-bot/
 - Verify bot is running (`npm start`)
 - Wait for minute 40+ with $12+ move
 
-**`/stat` command not working:**
+**`/wdyt` command not working:**
 - Check `DISCORD_BOT_TOKEN` in .env
 - Check `DISCORD_GUILD_ID` in .env
 - Ensure bot is invited to your server with slash command permissions

@@ -32,7 +32,7 @@ class DiscordService {
         this.client.on('interactionCreate', async (interaction) => {
             if (!interaction.isChatInputCommand()) return;
 
-            if (interaction.commandName === 'stat') {
+            if (interaction.commandName === 'wdyt') {
                 await this.handleStatCommand(interaction);
             }
         });
@@ -59,7 +59,7 @@ class DiscordService {
     async registerCommands() {
         const commands = [
             new SlashCommandBuilder()
-                .setName('stat')
+                .setName('wdyt')
                 .setDescription('Get current ETH hourly market status and readings')
                 .toJSON()
         ];
