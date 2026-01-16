@@ -101,7 +101,7 @@ class DiscordService {
             const now = new Date();
             const minutes = now.getMinutes();
             const isInWindow = minutes >= CONFIG.ETH_HOURLY.ENTRY_WINDOW_START &&
-                              minutes <= CONFIG.ETH_HOURLY.ENTRY_WINDOW_END;
+                minutes <= CONFIG.ETH_HOURLY.ENTRY_WINDOW_END;
 
             // Build the embed
             const embed = new EmbedBuilder()
@@ -140,8 +140,8 @@ class DiscordService {
             // Velocity
             if (state.velocity) {
                 const velEmoji = state.velocity.velocityStatus === 'RAPID_RISE' ? '🚀' :
-                                state.velocity.velocityStatus === 'RISING' ? '📈' :
-                                state.velocity.velocityStatus === 'FALLING' ? '📉' : '➡️';
+                    state.velocity.velocityStatus === 'RISING' ? '📈' :
+                        state.velocity.velocityStatus === 'FALLING' ? '📉' : '➡️';
                 embed.addFields(
                     { name: '⚡ Odds Velocity', value: `${velEmoji} ${state.velocity.velocityStatus} (${state.velocity.velocityPercent?.toFixed(2) || 0}%/min)`, inline: false },
                 );
@@ -150,7 +150,7 @@ class DiscordService {
             // Premium / Bounce Risk
             if (state.premium !== undefined) {
                 const premiumEmoji = state.bounceRisk === 'LOW' ? '✅' :
-                                    state.bounceRisk === 'MEDIUM' ? '⚠️' : '❌';
+                    state.bounceRisk === 'MEDIUM' ? '⚠️' : '❌';
                 embed.addFields(
                     { name: '💹 Premium Index', value: `${state.premium >= 0 ? '+' : ''}${state.premium?.toFixed(3) || 0}%`, inline: true },
                     { name: '🎢 Bounce Risk', value: `${premiumEmoji} ${state.bounceRisk || 'N/A'}`, inline: true },
@@ -160,16 +160,20 @@ class DiscordService {
             // Recommendation (if in window)
             if (isInWindow && state.recommendation) {
                 const recEmoji = state.recommendation.includes('BUY') ? '✅' :
-                                state.recommendation === 'SMALL BET' ? '⚠️' : '❌';
+                    state.recommendation === 'SMALL BET' ? '⚠️' : '❌';
                 embed.addFields(
                     { name: '🎯 Recommendation', value: `${recEmoji} **${state.recommendation}**`, inline: false },
                 );
             }
 
             // Checklist summary
-            if (state.checksCount !== undefined) {
+            if (state.score !== undefined) {
                 embed.addFields(
-                    { name: '📋 Checks Passed', value: `${state.checksCount}/6`, inline: true },
+                    { name: '💯 Confidence Score', value: `${state.score}/100`, inline: true },
+                );
+            } else if (state.checksCount !== undefined) {
+                embed.addFields(
+                    { name: '📋 Checks Passed', value: `${state.checksCount}`, inline: true },
                 );
             }
 

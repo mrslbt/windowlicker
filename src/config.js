@@ -13,6 +13,13 @@ const CONFIG = {
     GUILD_ID: process.env.DISCORD_GUILD_ID,
   },
 
+  // Email
+  EMAIL: {
+    USER: process.env.EMAIL_USER,
+    PASS: process.env.EMAIL_PASS,
+    TO: 'marsellbait@gmail.com',
+  },
+
   // ETH Hourly Strategy Config
   ETH_HOURLY: {
     PRICE_ALERT_THRESHOLD_USD: 10,
