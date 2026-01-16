@@ -43,6 +43,8 @@ async function runTest() {
         `**📊 Context**\n` +
         `• **Flow**: $${Math.abs(ethMove).toFixed(2)} (${scoreData.atrRatio}x ATR)\n` +
         `• **Vol**: 1.8x Avg\n` +
+        `• **BTC**: ✅ (Yes) +$150.00\n` +
+        `• **Risk**: 🟢 (Low)\n` +
         `• **Time**: ${60 - minutes}m left`,
         scoreData.color
     );

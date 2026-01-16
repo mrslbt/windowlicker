@@ -312,7 +312,7 @@ class EthHourlyStrategy {
         const btcConfirms = (direction === 'UP' && btcMove > 100) || (direction === 'DOWN' && btcMove < -100);
         if (btcConfirms) {
             score += 20;
-            breakdown.push({ label: `BTC Confirm`, pts: 20 });
+            breakdown.push({ label: `BTC Confirm (Yes)`, pts: 20 });
         }
 
         // 4. Sentiment / Odds (Max 15pts)
@@ -325,7 +325,7 @@ class EthHourlyStrategy {
         // 5. Market Structure / Premium (Max 10pts)
         if (premium.bounceRisk === 'LOW') {
             score += 10;
-            breakdown.push({ label: `Low Bounce Risk`, pts: 10 });
+            breakdown.push({ label: `Bounce Risk (Low)`, pts: 10 });
         }
 
         // 6. Liquidation 'Cherry on Top' (Bonus 10pts)
@@ -356,11 +356,11 @@ class EthHourlyStrategy {
             color = 0xff0000; // Red
         }
 
-        return { score, strength, recommendation, color, breakdown, atrRatio };
+        return { score, strength, recommendation, color, breakdown, atrRatio, btcConfirms, bounceRisk: premium.bounceRisk, btcMove };
     }
 
     async sendScorecardAlert(scoreData, currentPrice, minutes) {
-        const { score, strength, recommendation, color, breakdown, atrRatio } = scoreData;
+        const { score, strength, recommendation, color, breakdown, atrRatio, btcConfirms, bounceRisk, btcMove } = scoreData;
         const ethMove = this.getEthMoveUSD();
         const direction = ethMove >= 0 ? 'UP' : 'DOWN';
         const emoji = direction === 'UP' ? '📈' : '📉';
@@ -382,6 +382,8 @@ class EthHourlyStrategy {
             `**📊 Context**\n` +
             `• **Flow**: $${Math.abs(ethMove).toFixed(2)} (${atrRatio.toFixed(1)}x ATR)\n` +
             `• **Vol**: ${this.state.currentVolRelative?.toFixed(1) || 0}x Avg\n` +
+            `• **BTC**: ${btcConfirms ? '✅ (Yes)' : '❌ (No)'} ${btcMove >= 0 ? '+' : ''}$${btcMove.toFixed(2)}\n` +
+            `• **Risk**: ${bounceRisk === 'LOW' ? '🟢 (Low)' : bounceRisk === 'MEDIUM' ? '🟡 (Mid)' : '🔴 (High)'}\n` +
             `• **Time**: ${60 - minutes}m left`,
             color
         );

@@ -104,83 +104,48 @@ class DiscordService {
                 minutes <= CONFIG.ETH_HOURLY.ENTRY_WINDOW_END;
 
             // Build the embed
+            // Calculate Signal Strength & Bar
+            const score = state.score || 0;
+            let strength = 'WEAK';
+            if (score >= 75) strength = '🔥 EXTREME';
+            else if (score >= 50) strength = '✅ MODERATE';
+            else strength = '☁️ LOW';
+
+            const bars = Math.round(score / 10);
+            const filled = '🟩'.repeat(bars);
+            const empty = '⬜'.repeat(10 - bars);
+            const progressBar = `${filled}${empty}`;
+
             const embed = new EmbedBuilder()
-                .setTitle('📊 ETH Hourly Status')
+                .setTitle(`📊 ETH Hourly Status | ${state.recommendation || 'WAIT'}`)
                 .setColor(state.ethMove >= 0 ? 0x00ff00 : 0xff0000)
+                .setDescription(
+                    `**${strength}**\n` +
+                    `\`${progressBar}\` **${score}/100**`
+                )
                 .setTimestamp()
                 .setFooter({ text: 'Window Licker Bot' });
 
-            // Price info
+            // 1. Market Data
             embed.addFields(
-                { name: '💰 ETH Price', value: `$${state.ethPrice?.toFixed(2) || 'N/A'}`, inline: true },
-                { name: '📈 ETH Move', value: `${state.ethMove >= 0 ? '+' : ''}$${state.ethMove?.toFixed(2) || 'N/A'}`, inline: true },
-                { name: '₿ BTC Move', value: `${state.btcMove >= 0 ? '+' : ''}$${state.btcMove?.toFixed(2) || 'N/A'}`, inline: true },
+                { name: '💰 Market', value: `**$${state.ethPrice?.toFixed(2)}**\n${state.ethMove >= 0 ? '📈' : '📉'} ${state.ethMove >= 0 ? '+' : ''}$${state.ethMove?.toFixed(2)}`, inline: true },
+                { name: '₿ BTC', value: `${state.btcMove >= 0 ? '✅' : '⚠️'} ${state.btcMove >= 0 ? '+' : ''}$${state.btcMove?.toFixed(2)}`, inline: true },
+                { name: '⏱️ Window', value: `${isInWindow ? '🟢 OPEN' : '🔴 CLOSED'}\n${timeLeft}m left`, inline: true }
             );
 
-            // Timing
-            const timeToWindow = minutes < CONFIG.ETH_HOURLY.ENTRY_WINDOW_START
-                ? CONFIG.ETH_HOURLY.ENTRY_WINDOW_START - minutes
-                : 0;
-            const timeLeft = 60 - minutes;
+            // 2. Sentiment & Risk
+            const upOdds = state.upOdds ? (state.upOdds * 100).toFixed(0) : '0';
+            const downOdds = state.downOdds ? (state.downOdds * 100).toFixed(0) : '0';
 
             embed.addFields(
-                { name: '⏱️ Current Minute', value: `${minutes}`, inline: true },
-                { name: '🎯 Entry Window', value: isInWindow ? '✅ ACTIVE' : `⏳ In ${timeToWindow} min`, inline: true },
-                { name: '⏰ Hour Ends', value: `${timeLeft} min`, inline: true },
+                { name: '📊 Sentiment', value: `📈 **${upOdds}%** UP\n📉 **${downOdds}%** DOWN`, inline: true },
+                { name: '⚡ Velocity', value: `${state.velocity?.velocityStatus === 'RAPID_RISE' ? '🚀' : state.velocity?.velocityStatus === 'FALLING' ? '📉' : '➡️'} ${state.velocity?.velocityStatus || 'STABLE'}`, inline: true },
+                { name: '🛡️ Risk', value: `Bounce: **${state.bounceRisk || 'N/A'}**\nPrem: ${state.premium?.toFixed(3)}%`, inline: true }
             );
 
-            // Odds
-            if (state.upOdds !== null || state.downOdds !== null) {
-                embed.addFields(
-                    { name: '📊 UP Odds', value: state.upOdds ? `${(state.upOdds * 100).toFixed(1)}%` : 'N/A', inline: true },
-                    { name: '📊 DOWN Odds', value: state.downOdds ? `${(state.downOdds * 100).toFixed(1)}%` : 'N/A', inline: true },
-                );
-            }
-
-            // Velocity
-            if (state.velocity) {
-                const velEmoji = state.velocity.velocityStatus === 'RAPID_RISE' ? '🚀' :
-                    state.velocity.velocityStatus === 'RISING' ? '📈' :
-                        state.velocity.velocityStatus === 'FALLING' ? '📉' : '➡️';
-                embed.addFields(
-                    { name: '⚡ Odds Velocity', value: `${velEmoji} ${state.velocity.velocityStatus} (${state.velocity.velocityPercent?.toFixed(2) || 0}%/min)`, inline: false },
-                );
-            }
-
-            // Premium / Bounce Risk
-            if (state.premium !== undefined) {
-                const premiumEmoji = state.bounceRisk === 'LOW' ? '✅' :
-                    state.bounceRisk === 'MEDIUM' ? '⚠️' : '❌';
-                embed.addFields(
-                    { name: '💹 Premium Index', value: `${state.premium >= 0 ? '+' : ''}${state.premium?.toFixed(3) || 0}%`, inline: true },
-                    { name: '🎢 Bounce Risk', value: `${premiumEmoji} ${state.bounceRisk || 'N/A'}`, inline: true },
-                );
-            }
-
-            // Recommendation (if in window)
-            if (isInWindow && state.recommendation) {
-                const recEmoji = state.recommendation.includes('BUY') ? '✅' :
-                    state.recommendation === 'SMALL BET' ? '⚠️' : '❌';
-                embed.addFields(
-                    { name: '🎯 Recommendation', value: `${recEmoji} **${state.recommendation}**`, inline: false },
-                );
-            }
-
-            // Checklist summary
-            if (state.score !== undefined) {
-                embed.addFields(
-                    { name: '💯 Confidence Score', value: `${state.score}/100`, inline: true },
-                );
-            } else if (state.checksCount !== undefined) {
-                embed.addFields(
-                    { name: '📋 Checks Passed', value: `${state.checksCount}`, inline: true },
-                );
-            }
-
-            // Position info
             if (state.hasPosition) {
                 embed.addFields(
-                    { name: '📍 Active Position', value: `${state.positionDirection} @ $${state.positionEntry?.toFixed(2)}`, inline: false },
+                    { name: '📍 Active Position', value: `${state.positionDirection} @ $${state.positionEntry?.toFixed(2)}`, inline: false }
                 );
             }
 
