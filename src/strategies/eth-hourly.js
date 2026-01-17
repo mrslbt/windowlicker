@@ -88,27 +88,10 @@ class EthHourlyStrategy {
                 }
 
                 if (wasNewHour) {
-                    // === End of Hour Summary (Polymarket Resolution) ===
-                    // Check which token (UP/DOWN) won in the PREVIOUS hour's market
-                    const prevSlug = polymarketService.getPreviousHourSlug();
-                    const resolution = await polymarketService.getMarketResolution(prevSlug);
-
-                    if (resolution.resolved) {
-                        const icon = resolution.winner === 'UP' ? '📈' : '📉';
-                        const msg = `🏁 **Hour Result**\n` +
-                            `**${icon} ${resolution.winner} WON**\n` +
-                            `UP: $${resolution.upPrice?.toFixed(2)} | DOWN: $${resolution.downPrice?.toFixed(2)}`;
-
-                        discordService.sendAlert(CONFIG.DISCORD.ETH_HOURLY_WEBHOOK, msg);
-                    } else {
-                        // Fallback: market not yet resolved, show prices
-                        const msg = `⏳ **Hour Pending**\n` +
-                            `UP: ${(resolution.upPrice * 100)?.toFixed(0)}% | DOWN: ${(resolution.downPrice * 100)?.toFixed(0)}%`;
-                        discordService.sendAlert(CONFIG.DISCORD.ETH_HOURLY_WEBHOOK, msg);
-                    }
-
+                    // Reset hourly state
                     this.state.alertSentThisHour = false;
                     this.state.lastRecommendation = null;
+                    this.state.hourResultSent = false; // Track if we sent the end-of-hour result
 
                     // Clear odds history for new hour
                     polymarketService.clearHistory();
@@ -237,6 +220,25 @@ class EthHourlyStrategy {
 
         this.state.lastScore = scoreData.score;
         this.state.lastSignalStrength = scoreData.strength;
+
+        // === END OF HOUR RESULT (Minute 59) ===
+        // Report which token is priced at ~$1 right before market closes
+        if (minutes === 59 && !this.state.hourResultSent) {
+            const upOdds = oddsData.upOdds || 0;
+            const downOdds = oddsData.downOdds || 0;
+
+            // Whichever is higher is the "winner"
+            const winner = upOdds > downOdds ? 'UP' : 'DOWN';
+            const winnerPrice = upOdds > downOdds ? upOdds : downOdds;
+            const icon = winner === 'UP' ? '📈' : '📉';
+
+            const msg = `🏁 **Hour Result**\n` +
+                `**${icon} ${winner}** @ $${winnerPrice.toFixed(2)}`;
+
+            discordService.sendAlert(CONFIG.DISCORD.ETH_HOURLY_WEBHOOK, msg);
+            this.state.hourResultSent = true;
+            console.log(`[ETH Hourly] Hour Result: ${winner} @ $${winnerPrice.toFixed(2)}`);
+        }
 
         // Check if we should alert
         // Only alert in window (last 20 mins: 40-60)
