@@ -377,6 +377,11 @@ class EthHourlyStrategy {
         const direction = ethMove >= 0 ? 'UP' : 'DOWN';
         const emoji = direction === 'UP' ? '📈' : '📉';
 
+        // Create action text: "BUY UP" / "BUY DOWN" / "SKIP"
+        const actionText = recommendation === 'WAIT' || recommendation === 'SKIP'
+            ? recommendation
+            : `BUY ${direction}`;
+
         // Visual Score Bar
         const bars = Math.round(score / 10);
         const filled = '🟩'.repeat(bars);
@@ -384,7 +389,7 @@ class EthHourlyStrategy {
         const progressBar = `${filled}${empty}`;
 
         const embed = discordService.createEmbed(
-            `${emoji} ${recommendation} | ETH ${ethMove >= 0 ? '+' : ''}$${ethMove.toFixed(2)}`,
+            `${emoji} ${actionText} | ETH ${ethMove >= 0 ? '+' : ''}$${ethMove.toFixed(2)}`,
             `**${strength}**\n` +
             `\`${progressBar}\` **${score}/100**\n\n` +
 
