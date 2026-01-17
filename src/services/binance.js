@@ -134,52 +134,47 @@ class BinanceService {
         const data = await this.getPremiumIndex(symbol);
         const premium = data.premium;
 
-        let crowded = false;
         let bounceRisk = 'LOW';
         let analysis = '';
 
         // Premium thresholds (typical range: -0.1% to +0.1%)
-        // >0.15% or <-0.15% = extreme crowding
-        // >0.08% or <-0.08% = moderate crowding
+        // >0.15% or <-0.15% = extreme crowding (HIGH risk)
+        // >0.08% or <-0.08% = moderate crowding (MEDIUM risk)
 
         if (direction === 'UP') {
             // Buying UP - worried about longs being crowded (positive premium)
             if (premium > 0.15) {
-                crowded = true;
                 bounceRisk = 'HIGH';
-                analysis = 'Perp trading way above spot - longs crowded';
+                analysis = 'Longs crowded - perp way above spot';
             } else if (premium > 0.08) {
-                crowded = true;
                 bounceRisk = 'MEDIUM';
-                analysis = 'Perp above spot - some long crowding';
+                analysis = 'Some long crowding';
             } else if (premium < -0.05) {
                 bounceRisk = 'LOW';
-                analysis = 'Perp below spot - room to run up';
+                analysis = 'Room to run up';
             } else {
                 bounceRisk = 'LOW';
-                analysis = 'Neutral premium - no crowding';
+                analysis = 'Neutral - no crowding';
             }
         } else {
             // Buying DOWN - worried about shorts being crowded (negative premium)
             if (premium < -0.15) {
-                crowded = true;
                 bounceRisk = 'HIGH';
-                analysis = 'Perp trading way below spot - shorts crowded';
+                analysis = 'Shorts crowded - perp way below spot';
             } else if (premium < -0.08) {
-                crowded = true;
                 bounceRisk = 'MEDIUM';
-                analysis = 'Perp below spot - some short crowding';
+                analysis = 'Some short crowding';
             } else if (premium > 0.05) {
                 bounceRisk = 'LOW';
-                analysis = 'Perp above spot - room to run down';
+                analysis = 'Room to run down';
             } else {
                 bounceRisk = 'LOW';
-                analysis = 'Neutral premium - no crowding';
+                analysis = 'Neutral - no crowding';
             }
         }
 
         return {
-            crowded,
+            crowded: bounceRisk !== 'LOW',
             bounceRisk,
             premium,
             markPrice: data.markPrice,

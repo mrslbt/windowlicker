@@ -199,6 +199,48 @@ class PolymarketService {
             marketTitle: marketData.title,
         };
     }
+
+    /**
+     * Get the resolution of a market (check which token hit $1)
+     * @param {string} slug - Market slug (should be the PREVIOUS hour's market)
+     * @returns {Object} Resolution data
+     */
+    async getMarketResolution(slug) {
+        const marketData = await this.getMarketBySlug(slug);
+
+        if (!marketData) {
+            return { resolved: false, winner: null, error: 'Market not found' };
+        }
+
+        const prices = this.parseOutcomePrices(marketData.market);
+
+        // A resolved market will have one token at ~1.00 and the other at ~0.00
+        // We check if either token is >= 0.95 (allowing for some API lag)
+        if (prices.up >= 0.95) {
+            return { resolved: true, winner: 'UP', upPrice: prices.up, downPrice: prices.down };
+        } else if (prices.down >= 0.95) {
+            return { resolved: true, winner: 'DOWN', upPrice: prices.up, downPrice: prices.down };
+        } else {
+            // Market not yet resolved or still trading
+            return { resolved: false, winner: null, upPrice: prices.up, downPrice: prices.down };
+        }
+    }
+
+    /**
+     * Get the market slug for the PREVIOUS hour (for resolution check)
+     * @returns {string} Previous hour's market slug
+     */
+    getPreviousHourSlug() {
+        const now = new Date();
+        // Subtract 1 hour to get the previous hour's market
+        const prevHour = new Date(now.getTime() - 60 * 60 * 1000);
+
+        const month = prevHour.toLocaleString('en-US', { month: 'long', timeZone: 'America/New_York' }).toLowerCase();
+        const day = prevHour.toLocaleString('en-US', { day: 'numeric', timeZone: 'America/New_York' });
+        const hour = prevHour.toLocaleString('en-US', { hour: 'numeric', hour12: true, timeZone: 'America/New_York' }).toLowerCase().replace(' ', '');
+
+        return `ethereum-up-or-down-${month}-${day}-${hour}-et`;
+    }
 }
 
 module.exports = new PolymarketService();

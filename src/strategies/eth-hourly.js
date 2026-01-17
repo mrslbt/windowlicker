@@ -88,18 +88,22 @@ class EthHourlyStrategy {
                 }
 
                 if (wasNewHour) {
-                    // === End of Hour Summary ===
-                    if (this.state.ethHourOpen) {
-                        const closePrice = parseFloat(openPrice); // New open is roughly old close
-                        const move = closePrice - this.state.ethHourOpen;
-                        const icon = move >= 0 ? '📈' : '📉';
-                        const sign = move >= 0 ? '+' : '';
+                    // === End of Hour Summary (Polymarket Resolution) ===
+                    // Check which token (UP/DOWN) won in the PREVIOUS hour's market
+                    const prevSlug = polymarketService.getPreviousHourSlug();
+                    const resolution = await polymarketService.getMarketResolution(prevSlug);
 
-                        const msg = `🏁 **Hour Closed**\n` +
-                            `**${icon} ${sign}$${move.toFixed(2)}**\n` +
-                            `Open: $${this.state.ethHourOpen.toFixed(2)} | Close: $${closePrice.toFixed(2)}`;
+                    if (resolution.resolved) {
+                        const icon = resolution.winner === 'UP' ? '📈' : '📉';
+                        const msg = `🏁 **Hour Result**\n` +
+                            `**${icon} ${resolution.winner} WON**\n` +
+                            `UP: $${resolution.upPrice?.toFixed(2)} | DOWN: $${resolution.downPrice?.toFixed(2)}`;
 
-                        // Send silent notification or standard alert
+                        discordService.sendAlert(CONFIG.DISCORD.ETH_HOURLY_WEBHOOK, msg);
+                    } else {
+                        // Fallback: market not yet resolved, show prices
+                        const msg = `⏳ **Hour Pending**\n` +
+                            `UP: ${(resolution.upPrice * 100)?.toFixed(0)}% | DOWN: ${(resolution.downPrice * 100)?.toFixed(0)}%`;
                         discordService.sendAlert(CONFIG.DISCORD.ETH_HOURLY_WEBHOOK, msg);
                     }
 
@@ -234,20 +238,18 @@ class EthHourlyStrategy {
         this.state.lastScore = scoreData.score;
         this.state.lastSignalStrength = scoreData.strength;
 
-        // Check settlements every loop
-        // performanceService.checkSettlements(currentPrice); // REMOVED
-
         // Check if we should alert
         // Only alert in window (last 20 mins: 40-60)
         if (minutes < CONFIG.ETH_HOURLY.ENTRY_WINDOW_START) return;
 
-        if (scoreData.score < 50 && !this.state.alertSentThisHour) return; // Ignore noise
-        if (this.state.alertSentThisHour) return; // Prevent spam for now
+        // Only alert on meaningful signals (Score >= 50)
+        if (scoreData.score < 50 && !this.state.alertSentThisHour) return;
+        if (this.state.alertSentThisHour) return;
 
         // Alert
         await this.sendScorecardAlert(scoreData, currentPrice, minutes);
         this.state.alertSentThisHour = true;
-        this.state.lastRecommendation = scoreData.recommendation; // BUY / WAIT / SKIP based on score
+        this.state.lastRecommendation = scoreData.recommendation;
 
         // Log
         loggerService.logSignal({
